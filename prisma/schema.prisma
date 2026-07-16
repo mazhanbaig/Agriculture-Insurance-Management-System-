@@ -1,0 +1,229 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider     = "postgresql"
+  relationMode = "prisma"
+}
+
+enum Role {
+  FARMER
+  UNDERWRITER
+  CLAIMS_OFFICER
+  FIELD_AGENT
+  ADMIN
+}
+
+enum PolicyStatus {
+  ACTIVE
+  EXPIRED
+  CANCELLED
+}
+
+enum ClaimStatus {
+  SUBMITTED
+  UNDER_REVIEW
+  APPROVED
+  REJECTED
+  PAID
+}
+
+enum PaymentType {
+  PREMIUM
+  PAYOUT
+}
+
+model User {
+  id            String   @id @default(uuid())
+  authId        String   @unique
+  email         String   @unique
+  phone         String?
+  role          Role
+  isActive      Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  lastLoginAt   DateTime?
+
+  farmer              Farmer?
+  notifications       Notification[]
+  claimStatusChanges  ClaimStatusHistory[]
+  uploadedDocuments   ClaimDocument[]
+  assignedClaims      Claim[]                @relation("AssignedOfficer")
+  underwrittenPolicies Policy[]               @relation("Underwriter")
+}
+
+model Farmer {
+  id                String   @id @default(uuid())
+  userId            String   @unique
+  user              User     @relation(fields: [userId], references: [id])
+  fullName          String
+  guardianName      String?
+  cnicNumber        String   @unique
+  dateOfBirth       DateTime?
+  gender            String?
+  address           String?
+  city              String?
+  province          String?
+  bankName          String?
+  bankAccountNumber String?
+  accountTitle      String?
+  profilePhotoUrl   String?
+  createdAt         DateTime @default(now())
+
+  landParcels LandParcel[]
+  policies    Policy[]
+  claims      Claim[]
+}
+
+model LandParcel {
+  id              String   @id @default(uuid())
+  farmerId        String
+  farmer          Farmer   @relation(fields: [farmerId], references: [id])
+  landTitleNumber String?
+  address         String
+  latitude        Float?
+  longitude       Float?
+  areaAcres       Float
+  soilType        String?
+  cropType        String
+  irrigationType  String?
+  ownershipType   String?
+  district        String?
+  createdAt       DateTime @default(now())
+
+  policies Policy[]
+}
+
+model PolicyPlan {
+  id              String   @id @default(uuid())
+  name            String
+  cropType        String
+  coveragePerAcre Float
+  premiumRate     Float
+  minAreaAcres    Float?
+  maxAreaAcres    Float?
+  termMonths      Int
+  description     String?
+  isActive        Boolean  @default(true)
+  createdAt       DateTime @default(now())
+
+  policies Policy[]
+}
+
+model Policy {
+  id             String       @id @default(uuid())
+  policyNumber   String       @unique
+  farmerId       String
+  farmer         Farmer       @relation(fields: [farmerId], references: [id])
+  landParcelId   String
+  landParcel     LandParcel   @relation(fields: [landParcelId], references: [id])
+  policyPlanId   String
+  policyPlan     PolicyPlan   @relation(fields: [policyPlanId], references: [id])
+  underwriterId  String?
+  underwriter    User?        @relation("Underwriter", fields: [underwriterId], references: [id])
+  coverageAmount Float
+  premiumAmount  Float
+  premiumPaid    Boolean      @default(false)
+  paymentDate    DateTime?
+  startDate      DateTime
+  endDate        DateTime
+  status         PolicyStatus @default(ACTIVE)
+  certificateUrl String?
+  createdAt      DateTime     @default(now())
+
+  claims   Claim[]
+  payments Payment[]
+
+  @@index([farmerId])
+  @@index([status])
+}
+
+model Claim {
+  id                      String      @id @default(uuid())
+  claimNumber             String      @unique
+  policyId                String
+  policy                  Policy      @relation(fields: [policyId], references: [id])
+  farmerId                String
+  farmer                  Farmer      @relation(fields: [farmerId], references: [id])
+  assignedClaimsOfficerId String?
+  assignedClaimsOfficer   User?       @relation("AssignedOfficer", fields: [assignedClaimsOfficerId], references: [id])
+  incidentType            String
+  incidentDate            DateTime
+  incidentLocation        String?
+  description             String
+  estimatedLossPercentage Float?
+  claimedAmount           Float
+  approvedAmount          Float?
+  status                  ClaimStatus @default(SUBMITTED)
+  rejectionReason         String?
+  submittedAt             DateTime    @default(now())
+  resolvedAt              DateTime?
+
+  documents      ClaimDocument[]
+  statusHistory  ClaimStatusHistory[]
+  payments       Payment[]
+
+  @@index([policyId])
+  @@index([status])
+  @@index([farmerId])
+}
+
+model ClaimDocument {
+  id               String   @id @default(uuid())
+  claimId          String
+  claim            Claim    @relation(fields: [claimId], references: [id])
+  uploadedByUserId String
+  uploadedBy       User     @relation(fields: [uploadedByUserId], references: [id])
+  url              String
+  type             String
+  fileSize         Int?
+  mimeType         String?
+  ocrExtractedData Json?
+  uploadedAt       DateTime @default(now())
+
+  @@index([claimId])
+}
+
+model ClaimStatusHistory {
+  id              String   @id @default(uuid())
+  claimId         String
+  claim           Claim    @relation(fields: [claimId], references: [id])
+  fromStatus      String
+  toStatus        String
+  changedByUserId String
+  changedBy       User     @relation(fields: [changedByUserId], references: [id])
+  note            String?
+  changedAt       DateTime @default(now())
+
+  @@index([claimId])
+}
+
+model Payment {
+  id                   String      @id @default(uuid())
+  policyId             String?
+  policy               Policy?     @relation(fields: [policyId], references: [id])
+  claimId              String?
+  claim                Claim?      @relation(fields: [claimId], references: [id])
+  type                 PaymentType
+  amount               Float
+  gatewayTransactionId String?
+  status               String
+  paidAt               DateTime?
+  createdAt            DateTime    @default(now())
+}
+
+model Notification {
+  id                String   @id @default(uuid())
+  userId            String
+  user              User     @relation(fields: [userId], references: [id])
+  type              String
+  title             String
+  message           String
+  isRead            Boolean  @default(false)
+  relatedEntityType String?
+  relatedEntityId   String?
+  createdAt         DateTime @default(now())
+
+  @@index([userId, isRead])
+}
