@@ -9,6 +9,6 @@ const router = Router();
 router.use(requireAuth);
 router.get("/me", authController.getMe);
 router.patch("/profile", validate(updateProfileSchema), authController.updateProfile);
-router.patch("/role", requireRole("ADMIN"), validate(updateUserRoleSchema), authController.updateUserRole);
-router.get("/users", requireRole("ADMIN"), authController.listUsers);
+router.patch("/role", requireRole("PLATFORM_ADMIN"), validate(updateUserRoleSchema), authController.updateUserRole);
+router.get("/users", requireRole("PLATFORM_ADMIN"), authController.listUsers);
 export default router;

@@ -8,11 +8,12 @@ datasource db {
 }
 
 enum Role {
-  FARMER
+  PLATFORM_ADMIN
+  TENANT_ADMIN
   UNDERWRITER
   CLAIMS_OFFICER
   FIELD_AGENT
-  ADMIN
+  FARMER
 }
 
 enum PolicyStatus {
@@ -34,10 +35,32 @@ enum PaymentType {
   PAYOUT
 }
 
+model Tenant {
+  id                  String   @id @default(uuid())
+  name                String   @unique
+  slug                String   @unique
+  logoUrl             String?
+  isActive            Boolean  @default(true)
+  config              Json?
+  stripeCustomerId    String?  @unique
+  stripeSubscriptionId String? @unique
+  billingEnabled      Boolean  @default(false)
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  users        User[]
+  policyPlans  PolicyPlan[]
+  farmers      Farmer[]
+
+  @@index([slug])
+}
+
 model User {
   id            String   @id @default(uuid())
+  tenantId      String
+  tenant        Tenant   @relation(fields: [tenantId], references: [id])
   authId        String   @unique
-  email         String   @unique
+  email         String
   phone         String?
   role          Role
   isActive      Boolean  @default(true)
@@ -51,15 +74,22 @@ model User {
   uploadedDocuments   ClaimDocument[]
   assignedClaims      Claim[]                @relation("AssignedOfficer")
   underwrittenPolicies Policy[]               @relation("Underwriter")
+
+  @@unique([tenantId, authId])
+  @@unique([tenantId, email])
+  @@index([tenantId])
+  @@index([role])
 }
 
 model Farmer {
   id                String   @id @default(uuid())
+  tenantId          String
+  tenant            Tenant   @relation(fields: [tenantId], references: [id])
   userId            String   @unique
   user              User     @relation(fields: [userId], references: [id])
   fullName          String
   guardianName      String?
-  cnicNumber        String   @unique
+  cnicNumber        String
   dateOfBirth       DateTime?
   gender            String?
   address           String?
@@ -74,10 +104,15 @@ model Farmer {
   landParcels LandParcel[]
   policies    Policy[]
   claims      Claim[]
+
+  @@unique([tenantId, cnicNumber])
+  @@index([tenantId])
+  @@index([userId])
 }
 
 model LandParcel {
   id              String   @id @default(uuid())
+  tenantId        String
   farmerId        String
   farmer          Farmer   @relation(fields: [farmerId], references: [id])
   landTitleNumber String?
@@ -93,10 +128,15 @@ model LandParcel {
   createdAt       DateTime @default(now())
 
   policies Policy[]
+
+  @@index([tenantId])
+  @@index([farmerId])
 }
 
 model PolicyPlan {
   id              String   @id @default(uuid())
+  tenantId        String
+  tenant          Tenant   @relation(fields: [tenantId], references: [id])
   name            String
   cropType        String
   coveragePerAcre Float
@@ -109,10 +149,15 @@ model PolicyPlan {
   createdAt       DateTime @default(now())
 
   policies Policy[]
+
+  @@unique([tenantId, name])
+  @@index([tenantId])
+  @@index([isActive])
 }
 
 model Policy {
   id             String       @id @default(uuid())
+  tenantId       String
   policyNumber   String       @unique
   farmerId       String
   farmer         Farmer       @relation(fields: [farmerId], references: [id])
@@ -135,12 +180,14 @@ model Policy {
   claims   Claim[]
   payments Payment[]
 
+  @@index([tenantId])
   @@index([farmerId])
   @@index([status])
 }
 
 model Claim {
   id                      String      @id @default(uuid())
+  tenantId                String
   claimNumber             String      @unique
   policyId                String
   policy                  Policy      @relation(fields: [policyId], references: [id])
@@ -164,6 +211,7 @@ model Claim {
   statusHistory  ClaimStatusHistory[]
   payments       Payment[]
 
+  @@index([tenantId])
   @@index([policyId])
   @@index([status])
   @@index([farmerId])
@@ -201,6 +249,7 @@ model ClaimStatusHistory {
 
 model Payment {
   id                   String      @id @default(uuid())
+  tenantId             String
   policyId             String?
   policy               Policy?     @relation(fields: [policyId], references: [id])
   claimId              String?
@@ -211,6 +260,10 @@ model Payment {
   status               String
   paidAt               DateTime?
   createdAt            DateTime    @default(now())
+
+  @@index([tenantId])
+  @@index([policyId])
+  @@index([claimId])
 }
 
 model Notification {

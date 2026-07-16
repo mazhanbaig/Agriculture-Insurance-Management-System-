@@ -5,7 +5,7 @@ export async function uploadDocument(req: Request, res: Response, next: NextFunc
   try {
     if (!req.file) { res.status(400).json({ status: "error", message: "No file provided" }); return; }
     const { claimId, type } = req.body;
-    const document = await documentService.uploadDocument(req.user!.id, claimId, type, req.file.path);
+    const document = await documentService.uploadDocument(req.user!.id, req.user!.tenantId, claimId, type, req.file.path);
     res.status(201).json({ status: "success", data: document });
   } catch (error) { next(error); }
 }

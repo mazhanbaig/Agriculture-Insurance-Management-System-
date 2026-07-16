@@ -3,8 +3,8 @@ import { cloudinary } from "../lib/cloudinary";
 import { ocrQueue } from "../lib/bullmq";
 import { AppError } from "../middleware/errorHandler";
 
-export async function uploadDocument(userId: string, claimId: string, type: string, filePath: string) {
-  const claim = await prisma.claim.findUnique({ where: { id: claimId } });
+export async function uploadDocument(userId: string, tenantId: string, claimId: string, type: string, filePath: string) {
+  const claim = await prisma.claim.findFirst({ where: { id: claimId, tenantId } });
   if (!claim) throw new AppError("Claim not found", 404);
 
   const result = await cloudinary.uploader.upload(filePath, {

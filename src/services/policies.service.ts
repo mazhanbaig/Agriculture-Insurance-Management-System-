@@ -7,12 +7,16 @@ function generatePolicyNumber(): string {
   return `POL-${ts}-${rand}`;
 }
 
-export async function purchasePolicy(farmerId: string, data: { policyPlanId: string; landParcelId: string; startDate: string }) {
-  const parcel = await prisma.landParcel.findUnique({ where: { id: data.landParcelId } });
+export async function purchasePolicy(farmerId: string, tenantId: string, data: { policyPlanId: string; landParcelId: string; startDate: string }) {
+  const parcel = await prisma.landParcel.findFirst({
+    where: { id: data.landParcelId, tenantId },
+  });
   if (!parcel) throw new AppError("Land parcel not found", 404);
   if (parcel.farmerId !== farmerId) throw new AppError("Land parcel does not belong to you", 403);
 
-  const plan = await prisma.policyPlan.findUnique({ where: { id: data.policyPlanId } });
+  const plan = await prisma.policyPlan.findFirst({
+    where: { id: data.policyPlanId, tenantId },
+  });
   if (!plan) throw new AppError("Policy plan not found", 404);
   if (!plan.isActive) throw new AppError("Policy plan is no longer active", 400);
 
@@ -24,7 +28,7 @@ export async function purchasePolicy(farmerId: string, data: { policyPlanId: str
 
   return prisma.policy.create({
     data: {
-      policyNumber: generatePolicyNumber(), farmerId, landParcelId: data.landParcelId,
+      policyNumber: generatePolicyNumber(), tenantId, farmerId, landParcelId: data.landParcelId,
       policyPlanId: data.policyPlanId, coverageAmount, premiumAmount,
       startDate, endDate, status: "ACTIVE",
     },
@@ -40,9 +44,9 @@ export async function listFarmerPolicies(farmerId: string, page: number, limit: 
   return { policies, pagination: { page, limit, total, totalPages: Math.ceil(total / limit) } };
 }
 
-export async function getPolicy(policyId: string) {
-  const policy = await prisma.policy.findUnique({
-    where: { id: policyId },
+export async function getPolicy(policyId: string, tenantId: string) {
+  const policy = await prisma.policy.findFirst({
+    where: { id: policyId, tenantId },
     include: { policyPlan: true, landParcel: true, farmer: true, claims: true, payments: true },
   });
   if (!policy) throw new AppError("Policy not found", 404);

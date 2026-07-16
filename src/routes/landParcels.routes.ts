@@ -1,12 +1,13 @@
 import { Router } from "express";
 import { requireAuth } from "../middleware/auth";
-import { requireRole } from "../middleware/roleGuard";
+import { requireRole, requireTenantAccess } from "../middleware/roleGuard";
 import * as landParcelController from "../controllers/landParcels.controller";
 import { validate } from "../middleware/validate";
 import { createLandParcelSchema, updateLandParcelSchema } from "../validators/landParcels.validator";
 
 const router = Router();
 router.use(requireAuth);
+router.use(requireTenantAccess);
 router.use(requireRole("FARMER"));
 router.get("/", landParcelController.getParcels);
 router.get("/:id", landParcelController.getParcel);

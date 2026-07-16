@@ -4,7 +4,7 @@ import { AppError } from "../middleware/errorHandler";
 export async function getCurrentUser(userId: string) {
   const user = await prisma.user.findUnique({
     where: { id: userId },
-    include: { farmer: true },
+    include: { farmer: true, tenant: { select: { id: true, name: true, slug: true, config: true } } },
   });
   if (!user) throw new AppError("User not found", 404);
   return user;
@@ -20,8 +20,8 @@ export async function updateUserRole(
   role: string
 ) {
   const currentUser = await prisma.user.findUnique({ where: { id: currentUserId } });
-  if (!currentUser || currentUser.role !== "ADMIN") {
-    throw new AppError("Only admins can change user roles", 403);
+  if (!currentUser || currentUser.role !== "PLATFORM_ADMIN") {
+    throw new AppError("Only platform admins can change user roles", 403);
   }
   const targetUser = await prisma.user.findUnique({ where: { id: targetUserId } });
   if (!targetUser) throw new AppError("User not found", 404);
@@ -31,11 +31,13 @@ export async function updateUserRole(
   });
 }
 
-export async function listUsers(page: number, limit: number) {
+export async function listUsers(page: number, limit: number, tenantId?: string) {
   const skip = (page - 1) * limit;
+  const where: Record<string, any> = {};
+  if (tenantId) where.tenantId = tenantId;
   const [users, total] = await Promise.all([
-    prisma.user.findMany({ skip, take: limit, orderBy: { createdAt: "desc" } }),
-    prisma.user.count(),
+    prisma.user.findMany({ where, skip, take: limit, orderBy: { createdAt: "desc" } }),
+    prisma.user.count({ where }),
   ]);
   return {
     users,

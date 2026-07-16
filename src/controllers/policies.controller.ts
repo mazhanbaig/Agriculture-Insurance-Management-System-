@@ -6,7 +6,7 @@ export async function purchasePolicy(req: Request, res: Response, next: NextFunc
   try {
     const farmer = await prisma.farmer.findUnique({ where: { userId: req.user!.id } });
     if (!farmer) { res.status(400).json({ status: "error", message: "Farmer profile not found" }); return; }
-    const policy = await policyService.purchasePolicy(farmer.id, req.body);
+    const policy = await policyService.purchasePolicy(farmer.id, req.user!.tenantId, req.body);
     res.status(201).json({ status: "success", data: policy });
   } catch (error) { next(error); }
 }
@@ -22,6 +22,6 @@ export async function listMyPolicies(req: Request, res: Response, next: NextFunc
 }
 
 export async function getPolicy(req: Request, res: Response, next: NextFunction) {
-  try { const policy = await policyService.getPolicy(String(req.params.id)); res.json({ status: "success", data: policy }); }
+  try { const policy = await policyService.getPolicy(String(req.params.id), req.user!.tenantId); res.json({ status: "success", data: policy }); }
   catch (error) { next(error); }
 }

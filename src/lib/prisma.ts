@@ -29,6 +29,7 @@ export async function getNeonPrisma(): Promise<PrismaClient> {
     return new PrismaClient({ adapter });
   } catch {
     // Fall back to standard PrismaClient if Neon adapter is not available
+    console.warn("Neon serverless adapter not available. Falling back to standard PrismaClient.");
     return new PrismaClient();
   }
 }

@@ -7,7 +7,7 @@ export async function getProfile(req: Request, res: Response, next: NextFunction
 }
 
 export async function createProfile(req: Request, res: Response, next: NextFunction) {
-  try { const farmer = await farmerService.createFarmerProfile(req.user!.id, req.body); res.status(201).json({ status: "success", data: farmer }); }
+  try { const farmer = await farmerService.createFarmerProfile(req.user!.id, req.user!.tenantId, req.body); res.status(201).json({ status: "success", data: farmer }); }
   catch (error) { next(error); }
 }
 

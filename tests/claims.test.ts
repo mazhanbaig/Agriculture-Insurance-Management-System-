@@ -1,9 +1,61 @@
 import { app } from "../src/server";
 import request from "supertest";
 
-// Mock dependencies
+// Mock Redis first to prevent ECONNREFUSED noise
+jest.mock("../src/lib/redis", () => ({
+  redis: {
+    get: jest.fn(),
+    setex: jest.fn(),
+    del: jest.fn(),
+    on: jest.fn(),
+  },
+}));
+
+// Mock Prisma with all model methods used across the app
 jest.mock("../src/lib/prisma", () => ({
   prisma: {
+    tenant: {
+      findUnique: jest.fn(),
+      findFirst: jest.fn(),
+      create: jest.fn(),
+    },
+    user: {
+      findUnique: jest.fn(),
+      findFirst: jest.fn(),
+      create: jest.fn(),
+      update: jest.fn(),
+      findMany: jest.fn(),
+      count: jest.fn(),
+    },
+    farmer: {
+      findUnique: jest.fn(),
+      create: jest.fn(),
+      update: jest.fn(),
+    },
+    landParcel: {
+      findUnique: jest.fn(),
+      findFirst: jest.fn(),
+      findMany: jest.fn(),
+      count: jest.fn(),
+      create: jest.fn(),
+      update: jest.fn(),
+      delete: jest.fn(),
+    },
+    policyPlan: {
+      findUnique: jest.fn(),
+      findMany: jest.fn(),
+      count: jest.fn(),
+      create: jest.fn(),
+      update: jest.fn(),
+    },
+    policy: {
+      findUnique: jest.fn(),
+      findMany: jest.fn(),
+      count: jest.fn(),
+      create: jest.fn(),
+      update: jest.fn(),
+      updateMany: jest.fn(),
+    },
     claim: {
       findUnique: jest.fn(),
       findFirst: jest.fn(),
@@ -16,27 +68,43 @@ jest.mock("../src/lib/prisma", () => ({
       create: jest.fn(),
       findMany: jest.fn(),
     },
-    policy: {
+    claimDocument: {
       findUnique: jest.fn(),
+      findMany: jest.fn(),
+      create: jest.fn(),
+      delete: jest.fn(),
     },
-    farmer: {
-      findUnique: jest.fn(),
+    payment: {
+      create: jest.fn(),
+      findMany: jest.fn(),
+      updateMany: jest.fn(),
+      aggregate: jest.fn(),
     },
     notification: {
       create: jest.fn(),
+      updateMany: jest.fn(),
+      findMany: jest.fn(),
+      count: jest.fn(),
     },
   },
 }));
 
+// Mock BullMQ queues (ocrQueue used by documents.service, notificationQueue by claims.service)
 jest.mock("../src/lib/bullmq", () => ({
   notificationQueue: {
     add: jest.fn(),
   },
+  ocrQueue: {
+    add: jest.fn(),
+  },
+  importQueue: {
+    add: jest.fn(),
+  },
+  createOcrWorker: jest.fn(),
+  createNotificationWorker: jest.fn(),
+  createImportWorker: jest.fn(),
 }));
 
-import { prisma } from "../src/lib/prisma";
-
-const mockPrisma = prisma as jest.Mocked<typeof prisma>;
 
 describe("Claim State Machine", () => {
   beforeEach(() => {
@@ -45,7 +113,6 @@ describe("Claim State Machine", () => {
 
   describe("Claim Status Transitions", () => {
     it("should allow transition from SUBMITTED to UNDER_REVIEW", () => {
-      // This tests the valid transition logic in claimService.updateClaimStatus
       const validTransitions: Record<string, string[]> = {
         SUBMITTED: ["UNDER_REVIEW"],
         UNDER_REVIEW: ["APPROVED", "REJECTED"],
@@ -91,14 +158,12 @@ describe("Claim State Machine", () => {
 
   describe("Duplicate Claim Detection", () => {
     it("should detect duplicate claims within 30 days for same policy", () => {
-      // This tests the duplicate check logic in claimService.createClaim
       const existingClaim = {
         id: "claim-1",
         policyId: "policy-1",
         incidentDate: new Date(),
       };
 
-      // Simulate the check
       const thirtyDaysAgo = new Date();
       thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
 

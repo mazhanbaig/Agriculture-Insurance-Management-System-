@@ -51,4 +51,17 @@
 - Prisma 7.x: `url` removed from schema datasource. Created `prisma.config.ts` instead.
 - Top-level await: Removed from prisma.ts. Moved Neon adapter to `getNeonPrisma()` factory.
 - Zod 4: Used `z.ZodType` instead of `ZodSchema` import.
-- ModuleResolution: Set to `node16` instead of `node` for TypeScript 5.x compatibility.
+- ModuleResolution: Set to `node` with `ignoreDeprecations: "6.0"` for TypeScript compatibility.
+- Stripe: Changed to lazy `getStripe()` initialization to avoid import-time failure when env vars are missing.
+- Neon adapter: Dynamic import with variable path to avoid TypeScript static resolution of non-existent submodule.
+- Express 5 types: `req.params.id` and `req.query.*` wrapped with `String()` to handle `string | string[]` union type.
+
+## Git
+- [x] git init, initial commit made (hash: d583e03)
+- [ ] Push blocked — needs GitHub authentication
+- [ ] Pending: configure GitHub credentials and push
+
+## Tests
+- [x] 8/8 tests passing (claim state machine)
+- [ ] Redis ECONNREFUSED in test output — mock Redis to clean this up
+- [ ] Prisma mock incomplete — should add `user` methods for auth middleware

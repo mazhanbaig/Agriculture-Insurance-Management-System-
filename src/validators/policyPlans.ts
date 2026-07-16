@@ -1,5 +1,0 @@
-import { z } from "zod";
-export const createPolicyPlanSchema = z.object({ name: z.string().min(1), cropType: z.string().min(1), coveragePerAcre: z.number().positive(), premiumRate: z.number().positive(), minAreaAcres: z.number().positive().optional(), maxAreaAcres: z.number().positive().optional(), termMonths: z.number().int().positive(), description: z.string().optional() });
-export const updatePolicyPlanSchema = z.object({ name: z.string().min(1).optional(), cropType: z.string().min(1).optional(), coveragePerAcre: z.number().positive().optional(), premiumRate: z.number().positive().optional(), minAreaAcres: z.number().positive().optional(), maxAreaAcres: z.number().positive().optional(), termMonths: z.number().int().positive().optional(), description: z.string().optional(), isActive: z.boolean().optional() });
-export const quotePremiumSchema = z.object({ policyPlanId: z.string().uuid(), areaAcres: z.number().positive(), termMonths: z.number().int().positive().optional() });
-export const purchasePolicySchema = z.object({ policyPlanId: z.string().uuid(), landParcelId: z.string().uuid(), startDate: z.string().datetime() });

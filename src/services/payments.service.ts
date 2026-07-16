@@ -2,21 +2,25 @@ import { prisma } from "../lib/prisma";
 import { AppError } from "../middleware/errorHandler";
 import Stripe from "stripe";
 
+let stripeInstance: Stripe | null = null;
+
 function getStripe(): Stripe {
+  if (stripeInstance) return stripeInstance;
   const key = process.env.STRIPE_SECRET_KEY;
   if (!key) {
     throw new AppError("Stripe is not configured. Set STRIPE_SECRET_KEY environment variable.", 500);
   }
-  return new Stripe(key);
+  stripeInstance = new Stripe(key);
+  return stripeInstance;
 }
 
-export async function createPremiumPayment(policyId: string) {
-  const policy = await prisma.policy.findUnique({ where: { id: policyId }, include: { farmer: true } });
+export async function createPremiumPayment(policyId: string, tenantId: string) {
+  const policy = await prisma.policy.findFirst({ where: { id: policyId, tenantId }, include: { farmer: true } });
   if (!policy) throw new AppError("Policy not found", 404);
   if (policy.premiumPaid) throw new AppError("Premium already paid", 400);
 
   const paymentIntent = await getStripe().paymentIntents.create({ amount: Math.round(policy.premiumAmount * 100), currency: "usd", metadata: { policyId: policy.id, type: "PREMIUM" } });
-  const payment = await prisma.payment.create({ data: { policyId: policy.id, type: "PREMIUM", amount: policy.premiumAmount, gatewayTransactionId: paymentIntent.id, status: "pending" } });
+  const payment = await prisma.payment.create({ data: { tenantId, policyId: policy.id, type: "PREMIUM", amount: policy.premiumAmount, gatewayTransactionId: paymentIntent.id, status: "pending" } });
   return { clientSecret: paymentIntent.client_secret, payment };
 }
 
@@ -29,16 +33,21 @@ export async function confirmPremiumPayment(paymentIntentId: string) {
   return prisma.policy.update({ where: { id: policyId }, data: { premiumPaid: true, paymentDate: new Date() } });
 }
 
-export async function processPayout(claimId: string, amount: number) {
-  const claim = await prisma.claim.findUnique({ where: { id: claimId }, include: { farmer: true, policy: true } });
+export async function processPayout(claimId: string, tenantId: string, amount: number) {
+  const claim = await prisma.claim.findFirst({ where: { id: claimId, tenantId }, include: { farmer: true, policy: true } });
   if (!claim) throw new AppError("Claim not found", 404);
   if (claim.status !== "APPROVED") throw new AppError("Claim must be approved before payout", 400);
 
   const transfer = await getStripe().transfers.create({ amount: Math.round(amount * 100), currency: "usd", destination: process.env.STRIPE_CONNECT_ACCOUNT || "default", metadata: { claimId: claim.id, type: "PAYOUT" } });
-  const payment = await prisma.payment.create({ data: { claimId: claim.id, type: "PAYOUT", amount, gatewayTransactionId: transfer.id, status: "completed", paidAt: new Date() } });
+  const payment = await prisma.payment.create({ data: { tenantId, claimId: claim.id, type: "PAYOUT", amount, gatewayTransactionId: transfer.id, status: "completed", paidAt: new Date() } });
   await prisma.claim.update({ where: { id: claimId }, data: { status: "PAID" } });
   return payment;
 }
 
-export async function getPaymentsForPolicy(policyId: string) { return prisma.payment.findMany({ where: { policyId }, orderBy: { createdAt: "desc" } }); }
-export async function getPaymentsForClaim(claimId: string) { return prisma.payment.findMany({ where: { claimId }, orderBy: { createdAt: "desc" } }); }
+export async function getPaymentsForPolicy(policyId: string, tenantId: string) {
+  return prisma.payment.findMany({ where: { policyId, tenantId }, orderBy: { createdAt: "desc" } });
+}
+
+export async function getPaymentsForClaim(claimId: string, tenantId: string) {
+  return prisma.payment.findMany({ where: { claimId, tenantId }, orderBy: { createdAt: "desc" } });
+}
