@@ -1,0 +1,15 @@
+{
+  "version": 2,
+  "buildCommand": "npx prisma generate",
+  "outputDirectory": "dist",
+  "installCommand": "npm install",
+  "rewrites": [
+    { "source": "/(.*)", "destination": "/api/index.ts" }
+  ],
+  "functions": {
+    "api/index.ts": {
+      "memory": 512,
+      "maxDuration": 30
+    }
+  }
+}
