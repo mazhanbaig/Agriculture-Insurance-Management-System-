@@ -8,6 +8,10 @@ import { createFarmerSchema, updateFarmerSchema } from "../validators/farmers.va
 const router = Router();
 router.use(requireAuth);
 router.use(requireTenantAccess);
+
+// Public schema endpoint — any authenticated user can view
+router.get("/fields", farmerController.getFieldSchema);
+
 router.use(requireRole("FARMER"));
 router.get("/profile", farmerController.getProfile);
 router.post("/profile", validate(createFarmerSchema), farmerController.createProfile);

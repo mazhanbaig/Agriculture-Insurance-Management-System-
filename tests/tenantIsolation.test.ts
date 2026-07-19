@@ -9,6 +9,7 @@ import * as policyService from "../src/services/policies.service";
 // Mock Redis
 jest.mock("../src/lib/redis", () => ({
   redis: { get: jest.fn(), setex: jest.fn(), del: jest.fn(), on: jest.fn() },
+  checkRedisConnection: jest.fn().mockResolvedValue(undefined),
 }));
 
 // Mock Prisma — define the mock object INSIDE the factory to avoid hoisting issues
@@ -25,18 +26,33 @@ jest.mock("../src/lib/prisma", () => {
     claim: { findUnique: jest.fn(), findFirst: jest.fn(), findMany: jest.fn(), count: jest.fn(), create: jest.fn(), update: jest.fn() },
     claimStatusHistory: { create: jest.fn(), findMany: jest.fn() },
     claimDocument: { findUnique: jest.fn(), findMany: jest.fn(), create: jest.fn(), delete: jest.fn() },
+    fraudAuditLog: { create: jest.fn(), findMany: jest.fn() },
     payment: { create: jest.fn(), findMany: jest.fn(), updateMany: jest.fn(), aggregate: jest.fn() },
     notification: { create: jest.fn(), updateMany: jest.fn(), findMany: jest.fn(), count: jest.fn() },
+    tenantField: { findUnique: jest.fn(), findMany: jest.fn().mockResolvedValue([]), create: jest.fn(), update: jest.fn() },
+    farmerFieldValue: { findMany: jest.fn(), createMany: jest.fn(), deleteMany: jest.fn() },
+    usageLog: { create: jest.fn(), findMany: jest.fn() },
+    $transaction: jest.fn().mockImplementation((queries: any[]) => Promise.resolve(queries.map(() => ({ count: 0 })))),
   };
   prisma = mock;
   return { prisma: mock };
 });
+
+// Mock Supabase to prevent initialization errors
+jest.mock("../src/lib/supabase", () => ({
+  supabase: {
+    auth: {
+      getUser: jest.fn().mockResolvedValue({ data: { user: null }, error: null }),
+    },
+  },
+}));
 
 // Mock BullMQ
 jest.mock("../src/lib/bullmq", () => ({
   notificationQueue: { add: jest.fn() },
   ocrQueue: { add: jest.fn() },
   importQueue: { add: jest.fn() },
+  fraudQueue: { add: jest.fn() },
   createOcrWorker: jest.fn(),
   createNotificationWorker: jest.fn(),
   createImportWorker: jest.fn(),

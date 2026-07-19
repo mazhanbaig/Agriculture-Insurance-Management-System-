@@ -1,8 +1,9 @@
 import { Request, Response, NextFunction } from "express";
+import { supabase } from "../lib/supabase";
 import { prisma } from "../lib/prisma";
 import { AppError } from "./errorHandler";
 
-// Extend Express Request to include user and tenant
+// Extend Express Request type globally (used by all controllers)
 declare global {
   namespace Express {
     interface Request {
@@ -19,14 +20,22 @@ declare global {
         slug: string;
         config: Record<string, any> | null;
       };
+      requestId?: string;
     }
   }
 }
 
 /**
  * Auth guard middleware.
- * Verifies the Bearer token against Neon Auth via Stack Auth SDK,
+ * Verifies the Bearer JWT token against Supabase Auth,
  * then looks up or creates the local User row.
+ *
+ * Lookup strategy:
+ * 1. First tries to find user by `authId` (Supabase user UUID).
+ * 2. If not found, tries to find by email (handles admin-created users
+ *    who had placeholder authIds before their Supabase sign-up).
+ * 3. If found by email, updates authId to the real Supabase UUID.
+ * 4. If not found at all, creates a new local user record.
  */
 export async function requireAuth(
   req: Request,
@@ -44,73 +53,72 @@ export async function requireAuth(
       throw new AppError("Missing token", 401);
     }
 
-    // Verify session with Stack Auth
-    const { StackServerApp } = await import("@stackframe/stack");
-    const stackApp = new StackServerApp({
-      tokenStore: "cookie",
-      publishableClientKey: process.env.STACK_PUBLISHABLE_KEY!,
-      secretServerKey: process.env.STACK_SECRET_KEY!,
-    });
+    // Verify token with Supabase Auth
+    const {
+      data: { user: supabaseUser },
+      error,
+    } = await supabase.auth.getUser(token);
 
-    const session = await (stackApp as any).getSession({ token });
-    if (!session) {
-      throw new AppError("Invalid or expired session", 401);
+    if (error || !supabaseUser) {
+      throw new AppError("Invalid or expired token", 401);
     }
 
-    const user = await (session as any).getUser();
-    if (!user) {
-      throw new AppError("User not found in auth provider", 401);
-    }
+    const authId = supabaseUser.id;
+    const email = supabaseUser.email || "";
 
-    const authId = (user as any).id;
-    const email = (user as any).primaryEmail || "";
-
-    // Resolve tenant from header (priority) or hostname
-    let tenantId: string | null = null;
+    // Resolve tenant from header (priority)
     const tenantHeader = req.headers["x-tenant-id"] as string | undefined;
+    let tenantId: string | undefined = tenantHeader;
 
-    if (tenantHeader) {
-      tenantId = tenantHeader;
-    }
-
-    // Upsert local user row
+    // Strategy 1: Look up by Supabase authId
     let localUser = await prisma.user.findUnique({ where: { authId } });
 
-    if (!localUser) {
-      // If tenantId wasn't resolved from header, try to find or use default
-      if (!tenantId) {
-        const defaultTenant = await prisma.tenant.findUnique({
-          where: { slug: "default" },
-        });
-        if (!defaultTenant) {
-          throw new AppError("No tenant configured. Contact platform admin.", 400);
-        }
-        tenantId = defaultTenant.id;
-      }
-
-      // First login — create local user with FARMER role by default
-      localUser = await prisma.user.create({
-        data: {
-          tenantId,
-          authId,
-          email,
-          role: "FARMER",
-          lastLoginAt: new Date(),
-        },
-      });
-    } else {
-      // Update last login and email on subsequent logins
+    if (localUser) {
+      // Update last login and email
       localUser = await prisma.user.update({
         where: { id: localUser.id },
-        data: {
-          lastLoginAt: new Date(),
-          email,
-        },
+        data: { lastLoginAt: new Date(), email },
       });
+    } else {
+      // Strategy 2: Look up by email (handles admin-created users)
+      if (email) {
+        localUser = await prisma.user.findFirst({
+          where: { email, tenantId: tenantId || undefined },
+        });
+      }
+
+      if (localUser) {
+        // Link this Supabase authId to the existing local user
+        localUser = await prisma.user.update({
+          where: { id: localUser.id },
+          data: { authId, lastLoginAt: new Date(), email },
+        });
+      } else {
+        // Strategy 3: Create new local user
+        if (!tenantId) {
+          const defaultTenant = await prisma.tenant.findUnique({
+            where: { slug: "default" },
+          });
+          if (!defaultTenant) {
+            throw new AppError("No tenant configured. Contact platform admin.", 400);
+          }
+          tenantId = defaultTenant.id;
+        }
+
+        localUser = await prisma.user.create({
+          data: {
+            tenantId,
+            authId,
+            email,
+            role: "FARMER",
+            lastLoginAt: new Date(),
+          },
+        });
+      }
     }
 
     // If tenant was resolved from header, verify the user belongs to that tenant
-    if (tenantId && localUser.tenantId !== tenantId) {
+    if (tenantHeader && localUser.tenantId !== tenantHeader) {
       throw new AppError("User does not belong to the specified tenant", 403);
     }
 

@@ -1,5 +1,6 @@
 import { prisma } from "../lib/prisma";
 import { AppError } from "../middleware/errorHandler";
+import * as tenantFieldsService from "./tenantFields.service";
 
 export async function getFarmerProfile(userId: string) {
   const farmer = await prisma.farmer.findUnique({
@@ -18,7 +19,8 @@ export async function createFarmerProfile(
     dateOfBirth?: string; gender?: string; address?: string;
     city?: string; province?: string; bankName?: string;
     bankAccountNumber?: string; accountTitle?: string; profilePhotoUrl?: string;
-  }
+  },
+  customData?: Record<string, any>
 ) {
   const existing = await prisma.farmer.findUnique({ where: { userId } });
   if (existing) throw new AppError("Farmer profile already exists", 409);
@@ -27,7 +29,13 @@ export async function createFarmerProfile(
   });
   if (cnicExists) throw new AppError("CNIC number is already registered in this tenant", 409);
 
-  return prisma.farmer.create({
+  // Validate required custom fields (if tenant has configured them)
+  await tenantFieldsService.assertRequiredCustomFields(tenantId, customData);
+
+  // Validate custom data against tenant field schema
+  const validatedCustomData = await tenantFieldsService.validateCustomData(tenantId, customData);
+
+  const farmer = await prisma.farmer.create({
     data: {
       userId,
       tenantId,
@@ -35,11 +43,36 @@ export async function createFarmerProfile(
       dateOfBirth: data.dateOfBirth ? new Date(data.dateOfBirth) : undefined,
     },
   });
+
+  // Save custom field values
+  if (validatedCustomData) {
+    await tenantFieldsService.saveFarmerFieldValues(farmer.id, validatedCustomData);
+  }
+
+  return farmer;
 }
 
-export async function updateFarmerProfile(userId: string, data: Record<string, any>) {
+export async function updateFarmerProfile(
+  userId: string,
+  data: Record<string, any>,
+  customData?: Record<string, any>
+) {
   const farmer = await prisma.farmer.findUnique({ where: { userId } });
   if (!farmer) throw new AppError("Farmer profile not found", 404);
   if (data.dateOfBirth) data.dateOfBirth = new Date(data.dateOfBirth);
-  return prisma.farmer.update({ where: { userId }, data });
+
+  const result = await prisma.farmer.update({ where: { userId }, data });
+
+  // Update custom field values if provided
+  if (customData) {
+    const validatedCustomData = await tenantFieldsService.validateCustomData(
+      farmer.tenantId,
+      customData
+    );
+    if (validatedCustomData) {
+      await tenantFieldsService.saveFarmerFieldValues(farmer.id, validatedCustomData);
+    }
+  }
+
+  return result;
 }

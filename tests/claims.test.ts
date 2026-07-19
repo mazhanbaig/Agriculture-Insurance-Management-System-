@@ -9,6 +9,7 @@ jest.mock("../src/lib/redis", () => ({
     del: jest.fn(),
     on: jest.fn(),
   },
+  checkRedisConnection: jest.fn().mockResolvedValue(undefined),
 }));
 
 // Mock Prisma with all model methods used across the app
@@ -86,6 +87,31 @@ jest.mock("../src/lib/prisma", () => ({
       findMany: jest.fn(),
       count: jest.fn(),
     },
+    tenantField: {
+      findUnique: jest.fn(),
+      findMany: jest.fn(),
+      create: jest.fn(),
+      update: jest.fn(),
+    },
+    farmerFieldValue: {
+      findMany: jest.fn(),
+      createMany: jest.fn(),
+      deleteMany: jest.fn(),
+    },
+    usageLog: {
+      create: jest.fn(),
+      findMany: jest.fn(),
+    },
+    $transaction: jest.fn().mockImplementation((queries: any[]) => Promise.resolve(queries.map(() => ({ count: 0 })))),
+  },
+}));
+
+// Mock Supabase to prevent initialization errors
+jest.mock("../src/lib/supabase", () => ({
+  supabase: {
+    auth: {
+      getUser: jest.fn().mockResolvedValue({ data: { user: null }, error: null }),
+    },
   },
 }));
 
@@ -98,6 +124,9 @@ jest.mock("../src/lib/bullmq", () => ({
     add: jest.fn(),
   },
   importQueue: {
+    add: jest.fn(),
+  },
+  fraudQueue: {
     add: jest.fn(),
   },
   createOcrWorker: jest.fn(),

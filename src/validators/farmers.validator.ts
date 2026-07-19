@@ -13,6 +13,7 @@ export const createFarmerSchema = z.object({
   bankAccountNumber: z.string().optional(),
   accountTitle: z.string().optional(),
   profilePhotoUrl: z.string().url().optional(),
+  customData: z.record(z.string(), z.any()).optional(),
 });
 
 export const updateFarmerSchema = z.object({
@@ -28,4 +29,5 @@ export const updateFarmerSchema = z.object({
   bankAccountNumber: z.string().optional(),
   accountTitle: z.string().optional(),
   profilePhotoUrl: z.string().url().optional(),
+  customData: z.record(z.string(), z.any()).optional(),
 });

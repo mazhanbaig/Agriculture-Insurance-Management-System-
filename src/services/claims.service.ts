@@ -1,6 +1,7 @@
 import { prisma } from "../lib/prisma";
 import { AppError } from "../middleware/errorHandler";
 import { notificationQueue } from "../lib/bullmq";
+import { runSyncForensics, enqueueAsyncFraudAnalysis } from "./fraud.service";
 
 function generateClaimNumber(): string {
   const ts = Date.now().toString(36).toUpperCase();
@@ -36,6 +37,27 @@ export async function createClaim(farmerId: string, tenantId: string, userId: st
 
   await prisma.claimStatusHistory.create({ data: { claimId: claim.id, fromStatus: "SUBMITTED", toStatus: "SUBMITTED", changedByUserId: userId, note: "Claim submitted" } });
   await notificationQueue.add("claim-submitted", { userId, type: "CLAIM_SUBMITTED", title: "Claim Submitted", message: `Claim ${claim.claimNumber} has been submitted.`, relatedEntityType: "Claim", relatedEntityId: claim.id });
+
+  // Run sync forensic checks (fast, < 100ms)
+  try {
+    await runSyncForensics(claim.id, tenantId, farmerId, {
+      policyId: data.policyId,
+      incidentDate: data.incidentDate,
+      claimedAmount: data.claimedAmount,
+      estimatedLossPercentage: data.estimatedLossPercentage,
+    });
+  } catch (forensicError) {
+    // Don't block claim creation if forensics fail
+    console.error("Sync forensics failed:", forensicError);
+  }
+
+  // Enqueue async fraud analysis (AI checks, satellite, weather)
+  try {
+    await enqueueAsyncFraudAnalysis(claim.id, tenantId);
+  } catch (enqueueError) {
+    console.error("Failed to enqueue fraud analysis:", enqueueError);
+  }
+
   return claim;
 }
 

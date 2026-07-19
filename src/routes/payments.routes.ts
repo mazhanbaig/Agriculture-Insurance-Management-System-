@@ -11,7 +11,7 @@ router.use(requireTenantAccess);
 
 router.post("/create-payment-intent", requireRole("FARMER"), validate(createPaymentIntentSchema), paymentController.createPaymentIntent);
 router.post("/confirm", requireRole("FARMER"), paymentController.confirmPayment);
-router.post("/payout", requireRole("CLAIMS_OFFICER", "TENANT_ADMIN", "PLATFORM_ADMIN"), validate(processPayoutSchema), paymentController.processPayout);
+router.post("/payout", requireRole("CLAIMS_OFFICER", "SENIOR_CLAIMS_OFFICER", "TENANT_ADMIN", "PLATFORM_ADMIN"), validate(processPayoutSchema), paymentController.processPayout);
 router.get("/policy/:policyId", requireRole("FARMER", "TENANT_ADMIN", "PLATFORM_ADMIN"), paymentController.getPolicyPayments);
 router.get("/claim/:claimId", requireRole("FARMER", "CLAIMS_OFFICER", "TENANT_ADMIN", "PLATFORM_ADMIN"), paymentController.getClaimPayments);
 export default router;

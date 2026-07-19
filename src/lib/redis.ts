@@ -14,4 +14,12 @@ redis.on("error", (err) => {
   console.error("Redis connection error:", err);
 });
 
+/**
+ * Verify Redis connectivity by sending a PING command.
+ * Throws if the connection cannot be established.
+ */
+export async function checkRedisConnection(): Promise<void> {
+  await redis.ping();
+}
+
 export { redis };

@@ -1,5 +1,6 @@
 import { Job } from "bullmq";
 import { prisma } from "../lib/prisma";
+import nodemailer from "nodemailer";
 import pino from "pino";
 
 const logger = pino({ name: "notification-worker" });
@@ -13,9 +14,22 @@ interface NotificationJobData {
   relatedEntityId?: string;
 }
 
+// Create reusable Nodemailer transporter
+function createTransporter() {
+  return nodemailer.createTransport({
+    host: process.env.SMTP_HOST || "smtp.ethereal.email",
+    port: parseInt(process.env.SMTP_PORT || "587", 10),
+    secure: process.env.SMTP_SECURE === "true",
+    auth: {
+      user: process.env.SMTP_USER || "",
+      pass: process.env.SMTP_PASS || "",
+    },
+  });
+}
+
 /**
  * Process a notification job.
- * Creates a notification row in the database and sends an email via Resend.
+ * Creates a notification row in the database and sends an email via Nodemailer.
  */
 export async function processNotificationJob(
   job: Job<NotificationJobData>
@@ -38,18 +52,16 @@ export async function processNotificationJob(
       },
     });
 
-    // Send email notification via Resend
+    // Send email notification via Nodemailer
     try {
-      const { Resend } = await import("resend");
-      const resend = new Resend(process.env.RESEND_API_KEY!);
-
+      const transporter = createTransporter();
       const user = await prisma.user.findUnique({
         where: { id: userId },
       });
 
       if (user?.email) {
-        await resend.emails.send({
-          from: "AIMS <notifications@aims.app>",
+        await transporter.sendMail({
+          from: process.env.SMTP_FROM || '"AIMS" <noreply@aims.app>',
           to: user.email,
           subject: title,
           text: message,

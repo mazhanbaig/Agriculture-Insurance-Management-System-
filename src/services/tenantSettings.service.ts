@@ -1,6 +1,8 @@
 import { prisma } from "../lib/prisma";
 import { AppError } from "../middleware/errorHandler";
 
+import { FRAUD_TIERS, getFraudTierConfig, type FraudTier } from "../config/fraudTiers";
+
 export async function getSettings(tenantId: string) {
   const tenant = await prisma.tenant.findUnique({
     where: { id: tenantId },
@@ -49,4 +51,71 @@ export async function updateSettings(tenantId: string, data: {
       isActive: true,
     },
   });
+}
+
+/**
+ * Get the tenant's fraud tier configuration.
+ * Returns the tier name, label, and full config details.
+ */
+export async function getFraudTierSettings(tenantId: string) {
+  const tenant = await prisma.tenant.findUnique({
+    where: { id: tenantId },
+    select: { config: true },
+  });
+  if (!tenant) throw new AppError("Tenant not found", 404);
+
+  const config = (tenant.config as Record<string, any>) || {};
+  const tierName: string = config.fraudTier || "forge";
+  const tierConfig = getFraudTierConfig(tierName);
+
+  return {
+    currentTier: tierName,
+    label: tierConfig.label,
+    config: tierConfig,
+    availableTiers: Object.values(FRAUD_TIERS).map((t) => ({
+      name: t.name,
+      label: t.label,
+      description: t.description,
+      baseMonthlyFee: t.baseMonthlyFee,
+      imageCostPerCall: t.imageCostPerCall,
+    })),
+  };
+}
+
+/**
+ * Update the tenant's fraud tier.
+ * Validates that the tier name is one of: forge, titan, goat.
+ */
+export async function updateFraudTier(tenantId: string, tierName: string | undefined) {
+  if (!tierName) throw new AppError("Fraud tier is required", 400);
+
+  const normalizedTier = tierName.toLowerCase();
+  if (!["forge", "titan", "goat"].includes(normalizedTier)) {
+    throw new AppError("Invalid fraud tier. Choose: forge, titan, or goat", 400);
+  }
+
+  const tenant = await prisma.tenant.findUnique({
+    where: { id: tenantId },
+    select: { config: true },
+  });
+  if (!tenant) throw new AppError("Tenant not found", 404);
+
+  const existingConfig = (tenant.config as Record<string, any>) || {};
+  const tierConfig = getFraudTierConfig(normalizedTier);
+
+  await prisma.tenant.update({
+    where: { id: tenantId },
+    data: {
+      config: {
+        ...existingConfig,
+        fraudTier: normalizedTier,
+      },
+    },
+  });
+
+  return {
+    currentTier: normalizedTier,
+    label: tierConfig.label,
+    config: tierConfig,
+  };
 }

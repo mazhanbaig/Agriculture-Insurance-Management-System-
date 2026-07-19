@@ -12,4 +12,8 @@ router.use(requireTenantAccess);
 router.get("/", tenantSettingsController.getSettings);
 router.patch("/", requireRole("TENANT_ADMIN", "PLATFORM_ADMIN"), validate(updateSettingsSchema), tenantSettingsController.updateSettings);
 
+// Fraud tier endpoints — stored in Tenant.config.fraudTier
+router.get("/fraud-tier", tenantSettingsController.getFraudTier);
+router.patch("/fraud-tier", requireRole("TENANT_ADMIN", "PLATFORM_ADMIN"), tenantSettingsController.updateFraudTier);
+
 export default router;

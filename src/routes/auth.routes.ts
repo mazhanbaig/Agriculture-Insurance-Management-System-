@@ -1,11 +1,13 @@
 import { Router } from "express";
 import { requireAuth } from "../middleware/auth";
 import { requireRole } from "../middleware/roleGuard";
+import { authLimiter } from "../middleware/rateLimiter";
 import * as authController from "../controllers/auth.controller";
 import { validate } from "../middleware/validate";
 import { updateProfileSchema, updateUserRoleSchema } from "../validators/auth.validator";
 
 const router = Router();
+router.use(authLimiter);
 router.use(requireAuth);
 router.get("/me", authController.getMe);
 router.patch("/profile", validate(updateProfileSchema), authController.updateProfile);

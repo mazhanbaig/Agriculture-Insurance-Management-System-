@@ -154,11 +154,11 @@ export interface FarmerImportRow {
  *
  * NOTE ON AUTH/AUTHID:
  * Imported users are created with a fabricated `authId` that does NOT correspond
- * to a real Stack Auth session. These users exist in the database but CANNOT
- * log in through the normal auth flow. To gain access, they must go through the
- * standard sign-up flow (which will create a proper Stack Auth session and link
- * it to their email). The import only creates the database records — authentication
- * must be established separately.
+ * to a real Supabase Auth session. These users exist in the database but CANNOT
+ * log in through the normal auth flow. To gain access, they must sign up via
+ * Supabase (which will create a proper auth user). On their first API call,
+ * the requireAuth middleware will match them by email and update their authId
+ * to the real Supabase user UUID, linking the records.
  *
  * For large imports (>50 records), the controller queues this as an async BullMQ job.
  */
@@ -185,8 +185,8 @@ export async function importFarmersPolicies(
       // Find or create user
       let user = await prisma.user.findFirst({ where: { email: String(row.email), tenantId } });
       if (!user) {
-        // Fabricated authId — this user cannot log in until they complete Stack Auth sign-up.
-        // The authId uses tenantId + timestamp + row index + random suffix for uniqueness.
+        // Fabricated authId — the requireAuth middleware will link the real
+        // Supabase authId on first login via email matching.
         user = await prisma.user.create({
           data: {
             tenantId,

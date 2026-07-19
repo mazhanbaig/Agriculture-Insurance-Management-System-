@@ -12,6 +12,7 @@ enum Role {
   TENANT_ADMIN
   UNDERWRITER
   CLAIMS_OFFICER
+  SENIOR_CLAIMS_OFFICER
   FIELD_AGENT
   FARMER
 }
@@ -51,6 +52,8 @@ model Tenant {
   users        User[]
   policyPlans  PolicyPlan[]
   farmers      Farmer[]
+  tenantFields TenantField[]
+  usageLogs    UsageLog[]
 
   @@index([slug])
 }
@@ -104,6 +107,7 @@ model Farmer {
   landParcels LandParcel[]
   policies    Policy[]
   claims      Claim[]
+  fieldValues FarmerFieldValue[]
 
   @@unique([tenantId, cnicNumber])
   @@index([tenantId])
@@ -146,6 +150,7 @@ model PolicyPlan {
   termMonths      Int
   description     String?
   isActive        Boolean  @default(true)
+  config          Json?
   createdAt       DateTime @default(now())
 
   policies Policy[]
@@ -202,14 +207,17 @@ model Claim {
   estimatedLossPercentage Float?
   claimedAmount           Float
   approvedAmount          Float?
+  fraudScore              Int?        @default(0)
+  fraudVerdict            String?
   status                  ClaimStatus @default(SUBMITTED)
   rejectionReason         String?
   submittedAt             DateTime    @default(now())
   resolvedAt              DateTime?
 
-  documents      ClaimDocument[]
-  statusHistory  ClaimStatusHistory[]
-  payments       Payment[]
+  documents          ClaimDocument[]
+  statusHistory       ClaimStatusHistory[]
+  payments            Payment[]
+  fraudAuditLogs      FraudAuditLog[]
 
   @@index([tenantId])
   @@index([policyId])
@@ -264,6 +272,96 @@ model Payment {
   @@index([tenantId])
   @@index([policyId])
   @@index([claimId])
+}
+
+model FraudAuditLog {
+  id          String   @id @default(uuid())
+  claimId     String
+  claim       Claim    @relation(fields: [claimId], references: [id])
+  score       Int
+  verdict     String
+  flags       Json?
+  ruleResults Json?
+  rawMetadata Json?
+  createdAt   DateTime @default(now())
+
+  @@index([claimId])
+  @@index([score])
+}
+
+model AutoTriggerLog {
+  id              String   @id @default(uuid())
+  tenantId        String
+  policyId        String
+  landParcelId    String
+  ndviPre         Float
+  ndviPost        Float
+  ndviDrop        Float
+  weatherEvent    String?
+  weatherData     Json?
+  triggerMatched Boolean
+  claimId         String?
+  checkedAt       DateTime @default(now())
+
+  @@index([tenantId])
+  @@index([policyId])
+  @@index([checkedAt])
+}
+
+// ─── Phase 1: Dynamic Farmer Fields ───────────────────────────────────
+
+model TenantField {
+  id          String   @id @default(uuid())
+  tenantId    String
+  fieldKey    String
+  label       String
+  fieldType   String   // text, number, date, dropdown, file, checkbox
+  options     Json?    // For dropdown: array of {label, value} objects
+  required    Boolean  @default(false)
+  order       Int      @default(0)
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  tenant      Tenant   @relation(fields: [tenantId], references: [id])
+
+  @@unique([tenantId, fieldKey])
+  @@index([tenantId])
+}
+
+model FarmerFieldValue {
+  id          String   @id @default(uuid())
+  farmerId    String
+  fieldKey    String
+  value       Json     // Stores the actual value (string, number, array, etc.)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  farmer      Farmer   @relation(fields: [farmerId], references: [id])
+
+  @@unique([farmerId, fieldKey])
+  @@index([farmerId])
+}
+
+// ─── Phase 2: Tiered Fraud Detection & Usage Billing ────────────────
+
+model UsageLog {
+  id          String   @id @default(uuid())
+  tenantId    String
+  service     String   // openrouter, sentinel, openweather
+  tier        String   // forge, titan, goat
+  model       String?  // e.g. google/gemini-2.0-flash-001
+  quantity    Float    // number of calls / images analyzed
+  cost        Float    // per-unit cost
+  markup      Float    // markup amount
+  totalCost   Float    // cost + markup
+  metadata    Json?    // claimId, document URLs, etc.
+  createdAt   DateTime @default(now())
+
+  tenant      Tenant   @relation(fields: [tenantId], references: [id])
+
+  @@index([tenantId])
+  @@index([createdAt])
 }
 
 model Notification {
