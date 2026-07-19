@@ -3,37 +3,106 @@ import { redis } from "../lib/redis";
 import { prisma } from "../lib/prisma";
 import { compareNDVI } from "../lib/sentinel";
 import { generateClaimNumber } from "../utils/generators";
-import { notificationQueue, autoTriggerQueue } from "../lib/bullmq";
+import { notificationQueue, autoTriggerQueue, fraudQueue } from "../lib/bullmq";
+import { withRetry, mergeAutoTriggerConfig, type AutoTriggerConfig } from "../config/autoTriggerConfig";
+import { enqueueAsyncFraudAnalysis, runSyncForensics } from "../services/fraud.service";
 import logger from "../utils/logger";
+
+// ─── Monitoring counters ──────────────────────────────────────────────
+
+interface AutoTriggerStats {
+  policiesChecked: number;
+  autoTriggerEnabled: number;
+  ndviDataAvailable: number;
+  thresholdBreached: number;
+  weatherConfirmed: number;
+  claimsCreated: number;
+  claimsAutoApproved: number;
+  errors: number;
+  totalDurationMs: number;
+}
+
+function createStats(): AutoTriggerStats {
+  return {
+    policiesChecked: 0,
+    autoTriggerEnabled: 0,
+    ndviDataAvailable: 0,
+    thresholdBreached: 0,
+    weatherConfirmed: 0,
+    claimsCreated: 0,
+    claimsAutoApproved: 0,
+    errors: 0,
+    totalDurationMs: 0,
+  };
+}
+
+function logStats(stats: AutoTriggerStats, tenantId?: string): void {
+  logger.info({
+    tenantId,
+    ...stats,
+    msg: "Auto-trigger batch completed",
+  });
+}
+
+// ─── Weather check with retry ─────────────────────────────────────────
+
+interface WeatherResult {
+  confirmed: boolean;
+  event?: string;
+  data?: any;
+}
 
 /**
  * Check if weather confirms a disaster event at the given location.
+ * Uses withRetry for exponential backoff on failure.
  */
-async function checkWeatherConfirmation(location: string): Promise<{ confirmed: boolean; event?: string; data?: any }> {
+async function checkWeatherConfirmation(location: string): Promise<WeatherResult> {
   const weatherApiKey = process.env.OPENWEATHER_API_KEY;
   if (!weatherApiKey) return { confirmed: false };
 
   try {
-    const url = `https://api.openweathermap.org/data/2.5/weather?q=${encodeURIComponent(location)}&appid=${weatherApiKey}`;
-    const response = await fetch(url);
-    if (!response.ok) return { confirmed: false };
+    return await withRetry(
+      async () => {
+        const url = `https://api.openweathermap.org/data/2.5/weather?q=${encodeURIComponent(location)}&appid=${weatherApiKey}`;
+        const response = await fetch(url);
+        if (!response.ok) {
+          throw new Error(`Weather API responded with ${response.status}`);
+        }
 
-    const weatherData = (await response.json()) as any;
-    const conditions = (weatherData.weather || []).map((w: any) => w.main).join(", ");
-    const severeEvents = ["Thunderstorm", "Tornado", "Hurricane", "Extreme", "Flood", "Storm"];
-    const isSevere = severeEvents.some((e) => conditions.includes(e));
+        const weatherData = (await response.json()) as any;
+        const conditions = (weatherData.weather || []).map((w: any) => w.main).join(", ");
+        const severeEvents = ["Thunderstorm", "Tornado", "Hurricane", "Extreme", "Flood", "Storm"];
+        const isSevere = severeEvents.some((e) => conditions.includes(e));
 
-    return { confirmed: isSevere, event: isSevere ? conditions : undefined, data: weatherData };
+        return {
+          confirmed: isSevere,
+          event: isSevere ? conditions : undefined,
+          data: weatherData,
+        };
+      },
+      {
+        context: `checkWeather(${location})`,
+        maxRetries: 3,
+        baseDelayMs: 2000,
+      }
+    );
   } catch {
     return { confirmed: false };
   }
 }
 
+// ─── Policy auto-trigger check ────────────────────────────────────────
+
 /**
  * Run the auto-trigger check for a single active policy.
- * This is called by the worker for each policy that has auto-trigger enabled.
+ * This fetches NDVI data, checks weather, creates claim if conditions met,
+ * then enqueues fraud analysis.
  */
-async function checkPolicyAutoTrigger(policyId: string, tenantId: string) {
+async function checkPolicyAutoTrigger(
+  policyId: string,
+  tenantId: string,
+  stats: AutoTriggerStats
+): Promise<void> {
   const policy = await prisma.policy.findFirst({
     where: { id: policyId, tenantId, status: "ACTIVE" },
     include: {
@@ -44,34 +113,36 @@ async function checkPolicyAutoTrigger(policyId: string, tenantId: string) {
   });
 
   if (!policy) return;
+  stats.policiesChecked++;
+
   if (!policy.landParcel?.latitude || !policy.landParcel?.longitude) return;
 
-  // Check if auto-trigger is configured in the policy plan
-  const planConfig = policy.policyPlan?.config as { autoTrigger?: { enabled?: boolean; ndviThreshold?: number; weatherCheck?: boolean } } | null;
-  const autoTriggerConfig = planConfig?.autoTrigger;
-  if (!autoTriggerConfig?.enabled) return;
+  // Resolve auto-trigger config from the policy plan's config
+  const planConfig = policy.policyPlan?.config as Record<string, any> | null;
+  const rawAutoTrigger = planConfig?.autoTrigger as Partial<AutoTriggerConfig> | undefined;
+  const autoTriggerConfig = mergeAutoTriggerConfig(rawAutoTrigger);
 
-  const ndviThreshold = autoTriggerConfig.ndviThreshold || 0.3;
-  const weatherCheckEnabled = autoTriggerConfig.weatherCheck !== false;
+  if (!autoTriggerConfig.enabled) return;
+  stats.autoTriggerEnabled++;
 
-  // Get NDVI data
+  // Get NDVI data with retry built into compareNDVI
   const ndviResult = await compareNDVI(
     policy.landParcel.latitude,
     policy.landParcel.longitude,
     new Date(),
-    ndviThreshold
+    autoTriggerConfig.ndviThreshold
   );
 
   if (!ndviResult.ndviPre || !ndviResult.ndviPost) {
     logger.info({ policyId }, "NDVI data unavailable for auto-trigger check");
     return;
   }
+  stats.ndviDataAvailable++;
 
   const ndviDrop = ndviResult.ndviPre - ndviResult.ndviPost;
 
-  // Check NDVI threshold first
+  // Check NDVI threshold
   if (!ndviResult.thresholdBreached) {
-    // Log non-trigger for audit
     await prisma.autoTriggerLog.create({
       data: {
         tenantId, policyId,
@@ -82,21 +153,21 @@ async function checkPolicyAutoTrigger(policyId: string, tenantId: string) {
     });
     return;
   }
+  stats.thresholdBreached++;
 
-  // Weather verification (if enabled)
-  let weatherConfirmed = !weatherCheckEnabled;
+  // Weather verification
+  let weatherConfirmed = !autoTriggerConfig.weatherCheck;
   let weatherEvent: string | undefined;
   let weatherData: any = null;
 
-  if (weatherCheckEnabled && policy.landParcel.address) {
+  if (autoTriggerConfig.weatherCheck && policy.landParcel.address) {
     const weatherResult = await checkWeatherConfirmation(policy.landParcel.address);
     weatherConfirmed = weatherResult.confirmed;
     weatherEvent = weatherResult.event;
     weatherData = weatherResult.data;
   }
 
-  if (weatherCheckEnabled && !weatherConfirmed) {
-    // Log as unmatched — weather didn't confirm the disaster
+  if (autoTriggerConfig.weatherCheck && !weatherConfirmed) {
     await prisma.autoTriggerLog.create({
       data: {
         tenantId, policyId,
@@ -109,24 +180,33 @@ async function checkPolicyAutoTrigger(policyId: string, tenantId: string) {
     logger.info({ policyId }, "Auto-trigger skipped: weather does not confirm disaster");
     return;
   }
+  stats.weatherConfirmed++;
 
   // All conditions met — auto-create claim
   const claimNumber = generateClaimNumber();
+  const claimedAmount = policy.coverageAmount * autoTriggerConfig.claimPercentage;
+
   const claim = await prisma.claim.create({
     data: {
       claimNumber, tenantId, policyId: policy.id, farmerId: policy.farmerId,
       incidentType: "AUTO_TRIGGERED",
       incidentDate: new Date(),
       incidentLocation: policy.landParcel.address,
-      description: `Auto-triggered: NDVI dropped ${ndviDrop.toFixed(3)}, weather: ${weatherEvent || "verified"}`,
-      claimedAmount: policy.coverageAmount * 0.5,
+      description: `Auto-triggered: NDVI dropped ${ndviDrop.toFixed(3)} (threshold: ${autoTriggerConfig.ndviThreshold}), weather: ${weatherEvent || "verified"}`,
+      claimedAmount,
       status: "SUBMITTED",
       fraudScore: 0, fraudVerdict: "LOW",
     },
   });
 
   await prisma.claimStatusHistory.create({
-    data: { claimId: claim.id, fromStatus: "SUBMITTED", toStatus: "SUBMITTED", changedByUserId: "", note: "Auto-triggered by satellite NDVI + weather monitoring" },
+    data: {
+      claimId: claim.id,
+      fromStatus: "SUBMITTED",
+      toStatus: "SUBMITTED",
+      changedByUserId: "",
+      note: "Auto-triggered by satellite NDVI + weather monitoring",
+    },
   });
 
   await prisma.autoTriggerLog.create({
@@ -144,52 +224,106 @@ async function checkPolicyAutoTrigger(policyId: string, tenantId: string) {
     relatedEntityType: "Claim", relatedEntityId: claim.id,
   });
 
+  stats.claimsCreated++;
   logger.info({ policyId, claimId: claim.id, claimNumber, ndviDrop }, "Auto-triggered claim created");
 
-  // Auto-approve if fraud score is low
-  if (claim.fraudScore !== null && claim.fraudScore !== undefined && claim.fraudScore < 30) {
-    await prisma.claim.update({
-      where: { id: claim.id },
-      data: { status: "APPROVED", approvedAmount: claim.claimedAmount, resolvedAt: new Date() },
-    });
-    await prisma.claimStatusHistory.create({
-      data: { claimId: claim.id, fromStatus: "SUBMITTED", toStatus: "APPROVED", changedByUserId: "", note: "Auto-approved: low fraud risk" },
-    });
-    await notificationQueue.add("auto-claim-approved", {
-      userId: policy.farmerId, type: "AUTO_CLAIM_APPROVED",
-      title: "Claim Auto-Approved",
-      message: `Claim ${claimNumber} automatically approved. Payout processing.`,
-      relatedEntityType: "Claim", relatedEntityId: claim.id,
-    });
-    logger.info({ claimId: claim.id }, "Auto-triggered claim auto-approved");
+  // Run sync fraud forensics (sync checks, < 100ms)
+  try {
+    const syncResult = await runSyncForensics(
+      claim.id, tenantId, policy.farmerId,
+      {
+        policyId: policy.id,
+        incidentDate: new Date().toISOString(),
+        claimedAmount,
+        estimatedLossPercentage: ndviDrop * 100,
+      }
+    );
+
+    // Enqueue async fraud analysis (AI, satellite, weather deep checks)
+    await enqueueAsyncFraudAnalysis(claim.id, tenantId);
+
+    // Auto-approve if configured and fraud score is low
+    if (
+      autoTriggerConfig.autoApprove &&
+      syncResult.score < autoTriggerConfig.autoApproveMaxScore
+    ) {
+      await prisma.claim.update({
+        where: { id: claim.id },
+        data: {
+          status: "APPROVED",
+          approvedAmount: claimedAmount,
+          resolvedAt: new Date(),
+        },
+      });
+      await prisma.claimStatusHistory.create({
+        data: {
+          claimId: claim.id,
+          fromStatus: "SUBMITTED",
+          toStatus: "APPROVED",
+          changedByUserId: "",
+          note: `Auto-approved: sync fraud score ${syncResult.score} < ${autoTriggerConfig.autoApproveMaxScore}`,
+        },
+      });
+      await notificationQueue.add("auto-claim-approved", {
+        userId: policy.farmerId, type: "AUTO_CLAIM_APPROVED",
+        title: "Claim Auto-Approved",
+        message: `Claim ${claimNumber} automatically approved. Payout processing.`,
+        relatedEntityType: "Claim", relatedEntityId: claim.id,
+      });
+      stats.claimsAutoApproved++;
+      logger.info({ claimId: claim.id, score: syncResult.score }, "Auto-triggered claim auto-approved");
+    }
+  } catch (error) {
+    logger.error({ error, claimId: claim.id }, "Auto-trigger fraud analysis failed for claim — claim remains SUBMITTED for manual review");
+    stats.errors++;
   }
 }
+
+// ─── Worker ───────────────────────────────────────────────────────────
 
 const autoTriggerWorker = new Worker(
   "auto-trigger",
   async (job: Job) => {
+    const startTime = Date.now();
     const { tenantId, policyIds }: { tenantId?: string; policyIds?: string[] } = job.data;
+    const stats = createStats();
+
     logger.info({ jobId: job.id, policyCount: policyIds?.length }, "Processing auto-trigger batch");
 
     if (policyIds && policyIds.length > 0) {
       for (const policyId of policyIds) {
-        try { await checkPolicyAutoTrigger(policyId, tenantId || ""); }
-        catch (error) { logger.error({ error, policyId }, "Auto-trigger check failed"); }
+        try {
+          await checkPolicyAutoTrigger(policyId, tenantId || "", stats);
+        } catch (error) {
+          logger.error({ error, policyId }, "Auto-trigger check failed");
+          stats.errors++;
+        }
       }
     } else {
+      // Fetch all active policies. The query uses include to get policyPlan for config check.
       const policies = await prisma.policy.findMany({
         where: { ...(tenantId ? { tenantId } : {}), status: "ACTIVE" },
-        include: { policyPlan: true },
+        include: { policyPlan: true, landParcel: true },
       });
+
       for (const policy of policies) {
-        const policyPlanConfig = policy.policyPlan?.config as { autoTrigger?: { enabled?: boolean } } | null;
-        if (policyPlanConfig?.autoTrigger?.enabled) {
-          try { await checkPolicyAutoTrigger(policy.id, policy.tenantId); }
-          catch (error) { logger.error({ error, policyId: policy.id }, "Auto-trigger failed"); }
+        const planConfig = policy.policyPlan?.config as Record<string, any> | null;
+        const rawAutoTrigger = planConfig?.autoTrigger as Partial<AutoTriggerConfig> | undefined;
+        const autoTriggerConfig = mergeAutoTriggerConfig(rawAutoTrigger);
+
+        if (autoTriggerConfig.enabled) {
+          try {
+            await checkPolicyAutoTrigger(policy.id, policy.tenantId, stats);
+          } catch (error) {
+            logger.error({ error, policyId: policy.id }, "Auto-trigger failed");
+            stats.errors++;
+          }
         }
       }
     }
-    logger.info({ jobId: job.id }, "Auto-trigger batch completed");
+
+    stats.totalDurationMs = Date.now() - startTime;
+    logStats(stats, tenantId);
   },
   { connection: redis, concurrency: 3 }
 );
@@ -197,10 +331,14 @@ const autoTriggerWorker = new Worker(
 autoTriggerWorker.on("completed", (job) => logger.info({ jobId: job.id }, "Auto-trigger done"));
 autoTriggerWorker.on("failed", (job, error) => logger.error({ jobId: job?.id, error }, "Auto-trigger failed"));
 
-logger.info("Auto-trigger worker initialized");
+logger.info("Auto-trigger worker initialized (Phase 6 — retry + monitoring)");
 export { autoTriggerWorker };
 
 export async function scheduleAutoTriggerCheck(): Promise<void> {
-  await autoTriggerQueue.add("auto-trigger-batch", {}, { repeat: { every: 6 * 60 * 60 * 1000 } });
+  await autoTriggerQueue.add(
+    "auto-trigger-batch",
+    {},
+    { repeat: { every: 6 * 60 * 60 * 1000 } }
+  );
   logger.info("Auto-trigger scheduled: every 6 hours");
 }

@@ -22,6 +22,7 @@ export async function getPolicyPlan(planId: string, tenantId: string) {
 export async function createPolicyPlan(tenantId: string, data: {
   name: string; cropType: string; coveragePerAcre: number; premiumRate: number;
   minAreaAcres?: number; maxAreaAcres?: number; termMonths: number; description?: string;
+  config?: Record<string, any>;
 }) {
   return prisma.policyPlan.create({ data: { tenantId, ...data } });
 }
@@ -31,7 +32,18 @@ export async function updatePolicyPlan(planId: string, tenantId: string, data: R
     where: { id: planId, tenantId },
   });
   if (!plan) throw new AppError("Policy plan not found", 404);
-  return prisma.policyPlan.update({ where: { id: planId }, data });
+
+  // Merge config with existing config instead of replacing
+  const updateData = { ...data };
+  if (data.config && plan.config) {
+    const existingConfig = plan.config as Record<string, any>;
+    updateData.config = {
+      ...existingConfig,
+      ...data.config,
+    };
+  }
+
+  return prisma.policyPlan.update({ where: { id: planId }, data: updateData });
 }
 
 export async function calculateQuote(policyPlanId: string, tenantId: string, areaAcres: number, termMonths?: number) {

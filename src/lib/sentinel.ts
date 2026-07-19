@@ -1,5 +1,6 @@
 import { AppError } from "../middleware/errorHandler";
 import logger from "../utils/logger";
+import { withRetry } from "../config/autoTriggerConfig";
 
 interface SentinelConfig {
   apiKey: string;
@@ -28,6 +29,55 @@ function getConfig(): SentinelConfig {
 }
 
 /**
+ * Fetch NDVI from Sentinel Hub with retry support.
+ */
+async function fetchNDVIWithRetry(
+  latitude: number,
+  longitude: number,
+  date?: string
+): Promise<any | null> {
+  try {
+    return await withRetry(
+      async () => {
+        const cfg = getConfig();
+        const url = `${cfg.baseUrl}/catalog/search`;
+
+        const response = await fetch(url, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${cfg.apiKey}`,
+          },
+          body: JSON.stringify({
+            collections: ["sentinel-2-l2a"],
+            datetime: date || "latest",
+            limit: 1,
+            intersects: {
+              type: "Point",
+              coordinates: [longitude, latitude],
+            },
+          }),
+        });
+
+        if (!response.ok) {
+          throw new Error(`Sentinel Hub API responded with ${response.status}: ${response.statusText}`);
+        }
+
+        return response.json();
+      },
+      {
+        context: `getNDVI(${latitude}, ${longitude}, ${date})`,
+        maxRetries: 3,
+        baseDelayMs: 2000,
+      }
+    );
+  } catch (error) {
+    logger.error({ error }, "Failed to fetch NDVI data from Sentinel Hub after retries");
+    return null;
+  }
+}
+
+/**
  * Get NDVI (Normalized Difference Vegetation Index) for a specific location.
  * @param latitude - Latitude of the location
  * @param longitude - Longitude of the location
@@ -40,36 +90,8 @@ export async function getNDVI(
   date?: string
 ): Promise<number | null> {
   try {
-    const cfg = getConfig();
-    const url = `${cfg.baseUrl}/catalog/search`;
-
-    const response = await fetch(url, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${cfg.apiKey}`,
-      },
-      body: JSON.stringify({
-        collections: ["sentinel-2-l2a"],
-        datetime: date || "latest",
-        limit: 1,
-        intersects: {
-          type: "Point",
-          coordinates: [longitude, latitude],
-        },
-      }),
-    });
-
-    if (!response.ok) {
-      logger.warn(
-        { status: response.status, statusText: response.statusText },
-        "Sentinel Hub API request failed"
-      );
-      return null;
-    }
-
-    const data = (await response.json()) as any;
-    // Simplified NDVI extraction - in production, would process actual raster data
+    const data = await fetchNDVIWithRetry(latitude, longitude, date);
+    if (!data) return null;
     const ndviValue = data?.features?.[0]?.properties?.ndvi;
     return ndviValue !== undefined ? ndviValue : null;
   } catch (error) {
