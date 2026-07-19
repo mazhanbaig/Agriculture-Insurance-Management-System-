@@ -16,4 +16,8 @@ router.patch("/", requireRole("TENANT_ADMIN", "PLATFORM_ADMIN"), validate(update
 router.get("/fraud-tier", tenantSettingsController.getFraudTier);
 router.patch("/fraud-tier", requireRole("TENANT_ADMIN", "PLATFORM_ADMIN"), tenantSettingsController.updateFraudTier);
 
+// Payment gateway settings
+router.get("/payment-gateway", requireRole("TENANT_ADMIN", "PLATFORM_ADMIN"), tenantSettingsController.getPaymentGateway);
+router.patch("/payment-gateway", requireRole("TENANT_ADMIN", "PLATFORM_ADMIN"), tenantSettingsController.updatePaymentGateway);
+
 export default router;

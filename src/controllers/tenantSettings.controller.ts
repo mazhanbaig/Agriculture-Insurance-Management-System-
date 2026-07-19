@@ -28,3 +28,17 @@ export async function updateFraudTier(req: Request, res: Response, next: NextFun
     res.json({ status: "success", data: fraudTierInfo });
   } catch (error) { next(error); }
 }
+
+export async function getPaymentGateway(req: Request, res: Response, next: NextFunction) {
+  try {
+    const gatewayInfo = await tenantSettingsService.getPaymentGatewaySettings(req.user!.tenantId);
+    res.json({ status: "success", data: gatewayInfo });
+  } catch (error) { next(error); }
+}
+
+export async function updatePaymentGateway(req: Request, res: Response, next: NextFunction) {
+  try {
+    const gatewayInfo = await tenantSettingsService.updatePaymentGatewaySettings(req.user!.tenantId, req.body);
+    res.json({ status: "success", data: gatewayInfo });
+  } catch (error) { next(error); }
+}

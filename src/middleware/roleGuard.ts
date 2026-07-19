@@ -1,5 +1,7 @@
 import { Request, Response, NextFunction } from "express";
 import { AppError } from "./errorHandler";
+import { resolveUserPermissions } from "../services/iam.service";
+import type { Permission } from "../config/permissions";
 
 /**
  * Role guard middleware factory.
@@ -23,6 +25,46 @@ export function requireRole(...roles: string[]) {
     }
 
     next();
+  };
+}
+
+/**
+ * Permission guard middleware factory.
+ * Returns middleware that checks if the authenticated user has a specific permission.
+ * Uses the IAM service to resolve permissions (custom role > built-in role defaults).
+ * PLATFORM_ADMIN always passes.
+ */
+export function requirePermission(...permissions: Permission[]) {
+  return async (req: Request, _res: Response, next: NextFunction): Promise<void> => {
+    if (!req.user) {
+      next(new AppError("Authentication required", 401));
+      return;
+    }
+
+    // PLATFORM_ADMIN always has all permissions
+    if (req.user.role === "PLATFORM_ADMIN") {
+      next();
+      return;
+    }
+
+    try {
+      const userPermissions = await resolveUserPermissions(req.user.id);
+      const hasPermission = permissions.some((p) => userPermissions.includes(p));
+
+      if (!hasPermission) {
+        next(
+          new AppError(
+            `Access denied. Required permission: ${permissions.join(" or ")}`,
+            403
+          )
+        );
+        return;
+      }
+
+      next();
+    } catch (err) {
+      next(new AppError("Failed to resolve permissions", 500));
+    }
   };
 }
 

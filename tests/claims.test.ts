@@ -102,6 +102,15 @@ jest.mock("../src/lib/prisma", () => ({
       create: jest.fn(),
       findMany: jest.fn(),
     },
+    customRole: {
+      findUnique: jest.fn(),
+      findFirst: jest.fn(),
+      findMany: jest.fn(),
+      create: jest.fn(),
+      update: jest.fn(),
+      delete: jest.fn(),
+      count: jest.fn(),
+    },
     $transaction: jest.fn().mockImplementation((queries: any[]) => Promise.resolve(queries.map(() => ({ count: 0 })))),
   },
 }));

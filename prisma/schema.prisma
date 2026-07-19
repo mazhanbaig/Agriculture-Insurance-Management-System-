@@ -54,6 +54,7 @@ model Tenant {
   farmers      Farmer[]
   tenantFields TenantField[]
   usageLogs    UsageLog[]
+  customRoles  CustomRole[]
 
   @@index([slug])
 }
@@ -66,6 +67,8 @@ model User {
   email         String
   phone         String?
   role          Role
+  customRoleId  String?
+  customRole    CustomRole? @relation(fields: [customRoleId], references: [id])
   isActive      Boolean  @default(true)
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
@@ -362,6 +365,25 @@ model UsageLog {
 
   @@index([tenantId])
   @@index([createdAt])
+}
+
+// ─── Phase 3: Custom Roles / IAM ──────────────────────────────────────
+
+model CustomRole {
+  id          String   @id @default(uuid())
+  tenantId    String
+  name        String
+  description String?
+  permissions Json     // array of permission strings, e.g. ["claim:view", "claim:approve"]
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id])
+  users  User[]
+
+  @@unique([tenantId, name])
+  @@index([tenantId])
 }
 
 model Notification {

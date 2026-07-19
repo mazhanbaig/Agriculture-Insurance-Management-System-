@@ -2,6 +2,8 @@ import { prisma } from "../lib/prisma";
 import { AppError } from "../middleware/errorHandler";
 
 import { FRAUD_TIERS, getFraudTierConfig, type FraudTier } from "../config/fraudTiers";
+import { listAvailableGateways, updatePaymentGateway } from "../lib/paymentGatewayFactory";
+import type { GatewayType } from "../config/paymentGateways";
 
 export async function getSettings(tenantId: string) {
   const tenant = await prisma.tenant.findUnique({
@@ -118,4 +120,21 @@ export async function updateFraudTier(tenantId: string, tierName: string | undef
     label: tierConfig.label,
     config: tierConfig,
   };
+}
+
+// ─── Payment Gateway Settings ─────────────────────────────────────
+
+export async function getPaymentGatewaySettings(tenantId: string) {
+  return listAvailableGateways(tenantId);
+}
+
+export async function updatePaymentGatewaySettings(
+  tenantId: string,
+  data: { gateway: GatewayType; currency?: string }
+) {
+  const tenant = await prisma.tenant.findUnique({ where: { id: tenantId } });
+  if (!tenant) throw new AppError("Tenant not found", 404);
+
+  await updatePaymentGateway(tenantId, data.gateway, data.currency);
+  return listAvailableGateways(tenantId);
 }
