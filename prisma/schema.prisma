@@ -55,6 +55,7 @@ model Tenant {
   tenantFields TenantField[]
   usageLogs    UsageLog[]
   customRoles  CustomRole[]
+  invoices     Invoice[]
 
   @@index([slug])
 }
@@ -384,6 +385,50 @@ model CustomRole {
 
   @@unique([tenantId, name])
   @@index([tenantId])
+}
+
+// ─── Phase 5: Usage-Based Billing ──────────────────────────────────
+
+enum InvoiceStatus {
+  DRAFT
+  SENT
+  PAID
+  OVERDUE
+  CANCELLED
+}
+
+model Invoice {
+  id            String        @id @default(uuid())
+  tenantId      String
+  invoiceNumber String        @unique
+  periodStart   DateTime
+  periodEnd     DateTime
+  totalAmount   Float
+  currency      String        @default("USD")
+  status        InvoiceStatus @default(DRAFT)
+  invoiceUrl    String?
+  paidAt        DateTime?
+  dueDate       DateTime
+  createdAt     DateTime      @default(now())
+
+  tenant    Tenant            @relation(fields: [tenantId], references: [id])
+  lineItems InvoiceLineItem[]
+
+  @@index([tenantId])
+  @@index([status])
+}
+
+model InvoiceLineItem {
+  id          String  @id @default(uuid())
+  invoiceId   String
+  description String
+  amount      Float
+  quantity    Float?
+  unitPrice   Float?
+
+  invoice Invoice @relation(fields: [invoiceId], references: [id])
+
+  @@index([invoiceId])
 }
 
 model Notification {

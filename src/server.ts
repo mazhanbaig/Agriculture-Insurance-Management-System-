@@ -126,6 +126,7 @@ if (process.env.NODE_ENV !== "test") {
   require("./jobs/fraud-worker");
   require("./jobs/auto-trigger-worker");
   require("./jobs/notificationWorker");
+  require("./jobs/billingWorker");
 }
 app.use(errorHandler);
 
@@ -152,12 +153,20 @@ async function start() {
   const PORT = parseInt(process.env.PORT || "4000", 10);
   if (process.env.NODE_ENV !== "test") {
     app.listen(PORT, () => logger.info(`Server running on port ${PORT}`));
-    // Schedule the auto-trigger cron (every 6 hours)
+    // Schedule background jobs
+    // Auto-trigger cron (every 6 hours)
     try {
       const { scheduleAutoTriggerCheck } = await import("./jobs/auto-trigger-worker");
       await scheduleAutoTriggerCheck();
     } catch (err) {
       logger.warn({ err }, "Failed to schedule auto-trigger check — cron not started");
+    }
+    // Monthly billing cron (1st of month at 02:00 AM)
+    try {
+      const { scheduleMonthlyBilling } = await import("./jobs/billingWorker");
+      await scheduleMonthlyBilling();
+    } catch (err) {
+      logger.warn({ err }, "Failed to schedule monthly billing — cron not started");
     }
   }
 }

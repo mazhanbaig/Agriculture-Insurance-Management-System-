@@ -111,6 +111,17 @@ jest.mock("../src/lib/prisma", () => ({
       delete: jest.fn(),
       count: jest.fn(),
     },
+    invoice: {
+      findUnique: jest.fn(),
+      findFirst: jest.fn(),
+      findMany: jest.fn(),
+      create: jest.fn(),
+      update: jest.fn(),
+      count: jest.fn(),
+    },
+    invoiceLineItem: {
+      create: jest.fn(),
+    },
     $transaction: jest.fn().mockImplementation((queries: any[]) => Promise.resolve(queries.map(() => ({ count: 0 })))),
   },
 }));

@@ -2,6 +2,7 @@ import { prisma } from "../lib/prisma";
 import { AppError } from "../middleware/errorHandler";
 import Stripe from "stripe";
 import pino from "pino";
+import { logUsage, getUsageSummary as summarizeUsage } from "./usage.service";
 
 const logger = pino({ name: "billing" });
 
@@ -155,31 +156,132 @@ export async function getSubscriptionStatus(tenantId: string): Promise<{
 
   if (!tenant.stripeSubscriptionId) {
     return { active: false, plan: null, currentPeriodEnd: null, cancelAtPeriodEnd: false };
-  }    try {
-      const subscription = (await getStripe().subscriptions.retrieve(
-        tenant.stripeSubscriptionId
-      )) as any;
-      return {
-        active: subscription.status === "active" || subscription.status === "trialing",
-        plan: subscription.items?.data?.[0]?.price?.nickname || null,
-        currentPeriodEnd: subscription.current_period_end,
-        cancelAtPeriodEnd: subscription.cancel_at_period_end,
-      };
+  }
+
+  try {
+    const subscription = await getStripe().subscriptions.retrieve(
+      tenant.stripeSubscriptionId
+    ) as any;
+    return {
+      active: subscription.status === "active" || subscription.status === "trialing",
+      plan: subscription.items?.data?.[0]?.price?.nickname || null,
+      currentPeriodEnd: subscription.current_period_end,
+      cancelAtPeriodEnd: subscription.cancel_at_period_end,
+    };
   } catch (error) {
     logger.error({ error, tenantId }, "Failed to retrieve subscription status");
     return { active: false, plan: null, currentPeriodEnd: null, cancelAtPeriodEnd: false };
   }
 }
 
-// ---- Webhook Handling ----
+// ─── Usage Summary & Invoices ─────────────────────────────────────────
+
+/**
+ * Get usage summary for a tenant within a date range.
+ * Delegates to usage.service for the aggregation logic.
+ */
+export async function getUsageSummary(
+  tenantId: string,
+  startDate?: string,
+  endDate?: string
+) {
+  const start = startDate ? new Date(startDate) : new Date(new Date().getFullYear(), new Date().getMonth(), 1);
+  const end = endDate ? new Date(endDate) : new Date();
+
+  return summarizeUsage(tenantId, start, end);
+}
+
+/**
+ * List invoices for a tenant (paginated).
+ */
+export async function listInvoices(
+  tenantId: string,
+  page: number = 1,
+  limit: number = 20
+) {
+  const skip = (page - 1) * limit;
+
+  const [invoices, total] = await Promise.all([
+    prisma.invoice.findMany({
+      where: { tenantId },
+      orderBy: { createdAt: "desc" },
+      skip,
+      take: limit,
+      include: { lineItems: true },
+    }),
+    prisma.invoice.count({ where: { tenantId } }),
+  ]);
+
+  return {
+    data: invoices,
+    pagination: { page, limit, total, totalPages: Math.ceil(total / limit) },
+  };
+}
+
+/**
+ * Get a single invoice by ID (must belong to the tenant).
+ */
+export async function getInvoice(tenantId: string, invoiceId: string) {
+  const invoice = await prisma.invoice.findFirst({
+    where: { id: invoiceId, tenantId },
+    include: { lineItems: true },
+  });
+  if (!invoice) throw new AppError("Invoice not found", 404);
+  return invoice;
+}
+
+/**
+ * Mark an invoice as paid (manual or via webhook).
+ */
+export async function payInvoice(tenantId: string, invoiceId: string) {
+  const invoice = await prisma.invoice.findFirst({
+    where: { id: invoiceId, tenantId },
+  });
+  if (!invoice) throw new AppError("Invoice not found", 404);
+  if (invoice.status === "PAID") {
+    throw new AppError("Invoice is already paid", 400);
+  }
+
+  const updated = await prisma.invoice.update({
+    where: { id: invoiceId },
+    data: { status: "PAID", paidAt: new Date() },
+    include: { lineItems: true },
+  });
+
+  // Log this as a usage event for the billing system
+  await logUsage({
+    tenantId,
+    service: "openrouter",
+    tier: "forge",
+    quantity: 1,
+    metadata: { invoiceId, action: "invoice_paid", amount: invoice.totalAmount },
+  });
+
+  return updated;
+}
+
+/**
+ * Trigger manual invoice generation for the current period.
+ */
+export async function generateInvoice(tenantId: string) {
+  const periodStart = new Date(new Date().getFullYear(), new Date().getMonth(), 1);
+  const periodEnd = new Date();
+
+  const { generateTenantInvoice } = await import("../jobs/billingWorker");
+  const result = await generateTenantInvoice(tenantId, periodStart, periodEnd);
+
+  if (!result) {
+    throw new AppError("No chargeable usage found for this period — invoice not generated", 400);
+  }
+
+  return result;
+}
+
+// ─── Webhook Handling ─────────────────────────────────────────────────
 
 /**
  * Process a Stripe webhook event.
- * Verifies the signature and handles relevant events:
- * - checkout.session.completed: Store subscription ID
- * - customer.subscription.updated: Handle status changes
- * - customer.subscription.deleted: Deactivate tenant billing
- * - invoice.payment_failed: Log warning
+ * Verifies the signature and handles relevant events.
  */
 export async function handleWebhookEvent(
   rawBody: string,
@@ -254,7 +356,6 @@ export async function handleWebhookEvent(
     case "invoice.payment_failed": {
       const invoice = event.data.object as Stripe.Invoice;
       const tenantId = invoice.metadata?.tenantId;
-
       if (tenantId) {
         logger.warn({ tenantId, invoiceId: invoice.id }, "Invoice payment failed for tenant");
       }
