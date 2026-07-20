@@ -1,0 +1,64 @@
+# ═══════════════════════════════════════════════════════════
+# Railway Deployment Configuration — AIMS Backend
+#
+# Defines 4 services that run from the same repository:
+#   web               Express API server + inline BullMQ workers
+#   worker            Dedicated background job processor
+#   auto-trigger-cron Checks satellite NDVI every 6 hours
+#   billing-cron      Generates monthly invoices on the 1st
+# ═══════════════════════════════════════════════════════════
+
+[build]
+  # Railpack auto-detects Node.js from package.json
+  builder = "nixpacks"
+  buildCommand = "npm run build"
+
+[deploy]
+  healthcheckPath = "/health"
+  healthcheckTimeout = 30
+  restartPolicyType = "on-failure"
+  restartPolicyMaxRetries = 5
+
+# ─── Web Service ───────────────────────────────────────────
+# Runs the Express API server. Health checks ensure uptime.
+# Also starts BullMQ workers inline (fraud, notification, import).
+[[service]]
+  name = "web"
+  startCommand = "npm start"
+  [[service.ports]]
+    port = 4000
+    protocol = "http"
+
+# ─── Worker Service ────────────────────────────────────────
+# Dedicated process running all BullMQ workers.
+# No HTTP server — just processes background jobs.
+[[service]]
+  name = "worker"
+  startCommand = "node dist/worker.js"
+  [service.healthcheck]
+    # Workers don't serve HTTP; Railway keeps them alive via restart policy
+    type = "none"
+
+# ─── Auto-Trigger Cron Service ─────────────────────────────
+# Runs every 6 hours. Checks NDVI + weather for all active policies.
+# MUST call process.exit(0) when done — Railway needs the process to stop
+# between cron invocations.
+[[service]]
+  name = "auto-trigger-cron"
+  startCommand = "node dist/cron/autoTrigger.cron.js"
+  [service.cron]
+    schedule = "0 */6 * * *"  # Every 6 hours
+  [service.healthcheck]
+    type = "none"
+
+# ─── Billing Cron Service ──────────────────────────────────
+# Runs on the 1st of every month at 02:00 AM.
+# Generates invoices for all tenants based on usage.
+# MUST call process.exit(0) when done.
+[[service]]
+  name = "billing-cron"
+  startCommand = "node dist/cron/billing.cron.js"
+  [service.cron]
+    schedule = "0 2 1 * *"  # 1st of every month at 02:00 AM
+  [service.healthcheck]
+    type = "none"
