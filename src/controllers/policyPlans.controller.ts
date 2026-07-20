@@ -1,13 +1,27 @@
 import { Request, Response, NextFunction } from "express";
+import { AppError } from "../middleware/errorHandler";
 import * as policyPlanService from "../services/policyPlans.service";
 
 export async function listPlans(req: Request, res: Response, next: NextFunction) {
-  try { const page = parseInt(String(req.query.page ?? "1")) || 1; const limit = parseInt(String(req.query.limit ?? "20")) || 20; const result = await policyPlanService.listPolicyPlans(req.user!.tenantId, page, limit); res.json({ status: "success", ...result }); }
+  try {
+    const page = parseInt(String(req.query.page ?? "1")) || 1;
+    const limit = parseInt(String(req.query.limit ?? "20")) || 20;
+    // Public endpoint — use req.tenant (from resolveTenant middleware) instead of req.user
+    const tenantId = req.tenant?.id || req.user?.tenantId;
+    if (!tenantId) throw new AppError("Tenant not resolved. Provide x-tenant-slug header.", 400);
+    const result = await policyPlanService.listPolicyPlans(tenantId, page, limit);
+    res.json({ status: "success", ...result });
+  }
   catch (error) { next(error); }
 }
 
 export async function getPlan(req: Request, res: Response, next: NextFunction) {
-  try { const plan = await policyPlanService.getPolicyPlan(String(req.params.id), req.user!.tenantId); res.json({ status: "success", data: plan }); }
+  try {
+    const tenantId = req.tenant?.id || req.user?.tenantId;
+    if (!tenantId) throw new AppError("Tenant not resolved. Provide x-tenant-slug header.", 400);
+    const plan = await policyPlanService.getPolicyPlan(String(req.params.id), tenantId);
+    res.json({ status: "success", data: plan });
+  }
   catch (error) { next(error); }
 }
 
