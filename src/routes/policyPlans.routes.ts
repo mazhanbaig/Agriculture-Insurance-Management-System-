@@ -6,12 +6,13 @@ import { validate } from "../middleware/validate";
 import { createPolicyPlanSchema, updatePolicyPlanSchema, quotePremiumSchema } from "../validators/policyPlans.validator";
 
 const router = Router();
-router.use(requireAuth);
-router.use(requireTenantAccess);
 
+// Public endpoints — no auth required
 router.get("/", policyPlanController.listPlans);
 router.get("/:id", policyPlanController.getPlan);
-router.post("/quote", requireRole("FARMER"), validate(quotePremiumSchema), policyPlanController.calculateQuote);
-router.post("/", requireRole("UNDERWRITER", "TENANT_ADMIN", "PLATFORM_ADMIN"), validate(createPolicyPlanSchema), policyPlanController.createPlan);
-router.patch("/:id", requireRole("UNDERWRITER", "TENANT_ADMIN", "PLATFORM_ADMIN"), validate(updatePolicyPlanSchema), policyPlanController.updatePlan);
+
+// Protected endpoints
+router.post("/quote", requireAuth, requireTenantAccess, requireRole("FARMER"), validate(quotePremiumSchema), policyPlanController.calculateQuote);
+router.post("/", requireAuth, requireTenantAccess, requireRole("UNDERWRITER", "TENANT_ADMIN", "PLATFORM_ADMIN"), validate(createPolicyPlanSchema), policyPlanController.createPlan);
+router.patch("/:id", requireAuth, requireTenantAccess, requireRole("UNDERWRITER", "TENANT_ADMIN", "PLATFORM_ADMIN"), validate(updatePolicyPlanSchema), policyPlanController.updatePlan);
 export default router;
