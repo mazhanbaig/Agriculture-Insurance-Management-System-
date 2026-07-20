@@ -9,9 +9,12 @@
 # ═══════════════════════════════════════════════════════════
 
 [build]
-  # Railpack auto-detects Node.js from package.json.
-  # prisma generate is now part of the npm build script, so no separate buildCommand needed.
   builder = "railpack"
+  [build.environment]
+    # Prisma 7 requires Node.js 20.19+. Railpack defaults to 18 for some projects.
+    RAILPACK_NODE_VERSION = "20"
+
+  # prisma generate is part of the npm build script — no separate buildCommand needed.
 
 [deploy]
   healthcheckPath = "/health"
