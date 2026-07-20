@@ -5,9 +5,7 @@
   "main": "dist/server.js",
   "scripts": {
     "dev": "ts-node-dev --respawn src/server.ts",
-    "prebuild": "npx prisma generate",
-    "build": "tsc",
-    "postinstall": "npx prisma generate",
+    "build": "npx prisma generate && tsc",
     "start": "node dist/server.js",
     "test": "jest",
     "test:watch": "jest --watch",
