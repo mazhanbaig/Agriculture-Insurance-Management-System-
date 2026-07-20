@@ -2,7 +2,8 @@
 
 > **Multi-tenant SaaS backend** for agricultural insurance.  
 > Express + TypeScript + Prisma 7 + Supabase Auth + BullMQ + OpenRouter  
-> **134 tests passing** · **84+ API endpoints** · **8 phases complete**
+> **134 tests passing** · **84+ API endpoints** · **8 phases complete**  
+> **Live:** [agriculture-insurance-management-system.up.railway.app](https://agriculture-insurance-management-system.up.railway.app/health)
 
 ---
 
@@ -42,7 +43,15 @@ AIMS is a digital platform connecting insurance companies (tenants) and farmers 
 
 ---
 
-## Quick Start
+## Live Deployment
+
+The backend is live at:  
+**https://agriculture-insurance-management-system.up.railway.app**  
+Health check: `GET /health` → `{"status":"ok"}`
+
+---
+
+## Quick Start (Local Development)
 
 ### Prerequisites
 
@@ -79,8 +88,7 @@ redis-server
 npm run dev
 ```
 
-Server runs at `http://localhost:4000`.  
-Health check: `GET /health`
+Server runs at `http://localhost:4000`.
 
 ---
 
@@ -123,7 +131,7 @@ All endpoints are prefixed with `/api/v1`.
 | **Auth** | GET /me, PATCH /profile, PATCH /role, GET /users | All authenticated |
 | **Farmers** | GET/POST/PATCH profile, GET /fields | FARMER |
 | **Land Parcels** | CRUD (5 endpoints) | FARMER |
-| **Policy Plans** | List, Get, Quote, Create, Update (5) | UNDERWRITER+ |
+| **Policy Plans** | List, Get, Quote, Create, Update (5) | **Public** (GET), UNDERWRITER+ (POST/PATCH) |
 | **Policies** | Purchase, List My, Get My (3) | FARMER |
 | **Claims** | Submit, List My, List All, Get, Assign, Status (7) | Mixed |
 | **Documents** | Upload, List, Get, Delete (4) | FARMER+ |
