@@ -93,7 +93,7 @@ export async function generateTenantInvoice(
   const dueDate = new Date(periodEnd.getTime() + 30 * 24 * 60 * 60 * 1000); // 30 days after period end
 
   // Create invoice with line items in a transaction
-  const invoice = await prisma.$transaction(async (tx) => {
+  const invoice = await prisma.$transaction(async (tx: any) => {
     const inv = await tx.invoice.create({
       data: {
         tenantId,

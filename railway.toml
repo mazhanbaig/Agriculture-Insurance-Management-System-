@@ -11,7 +11,7 @@
 [build]
   # Railpack auto-detects Node.js from package.json
   builder = "nixpacks"
-  buildCommand = "npm run build"
+  buildCommand = "npx prisma generate && npm run build"
 
 [deploy]
   healthcheckPath = "/health"

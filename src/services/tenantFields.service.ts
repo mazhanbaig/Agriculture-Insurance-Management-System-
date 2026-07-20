@@ -143,7 +143,7 @@ export async function validateCustomData(
     throw new AppError("No custom fields configured for this tenant", 400);
   }
 
-  const fieldMap = new Map(fields.map((f) => [f.fieldKey, f]));
+  const fieldMap = new Map(fields.map((f: any) => [f.fieldKey, f]));
   const validated: Record<string, any> = {};
   const errors: string[] = [];
 

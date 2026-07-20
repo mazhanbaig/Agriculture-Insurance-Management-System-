@@ -175,10 +175,10 @@ export async function runAsyncFraudAnalysis(
   const tierConfig = getFraudTierConfig(fraudTierName);
 
   // 4. Check claim documents for AI-based analysis
-  const documents = claim.documents.filter((d) => d.type === "photo" || d.type === "video");
+  const documents = claim.documents.filter((d: any) => d.type === "photo" || d.type === "video");
 
   if (documents.length > 0) {
-    const photoDocs = documents.filter((d) => d.type === "photo");
+    const photoDocs = documents.filter((d: any) => d.type === "photo");
     const imagesToAnalyze = photoDocs.slice(0, tierConfig.maxImagesPerClaim);
 
     for (const doc of imagesToAnalyze) {

@@ -71,7 +71,7 @@ export async function getUsageSummary(
 
   const summary = {
     totalCalls: logs.length,
-    totalCost: logs.reduce((sum, l) => sum + l.totalCost, 0),
+    totalCost: logs.reduce((sum: number, l: any) => sum + l.totalCost, 0),
     byService: {} as Record<string, { calls: number; cost: number }>,
     byDate: {} as Record<string, { calls: number; cost: number }>,
   };
