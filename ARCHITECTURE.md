@@ -216,10 +216,11 @@ export async function listAllClaims(tenantId: string, page: number, limit: numbe
 | `redis.ts` | ioredis singleton with error logging |
 | `bullmq.ts` | 5 queues (OCR, notification, import, fraud, auto-trigger) with factory functions for workers |
 | `cloudinary.ts` | Cloudinary SDK configured from env vars |
-| `openrouter.ts` | OpenRouter unified LLM client (text + vision) |
+| `openrouter.ts` | OpenRouter unified LLM client (text + vision) — also `analyzeWithFallback()` for retry chain |
 | `sentinel.ts` | Sentinel Hub NDVI comparison client |
 | `stripe.ts` | Lazy-initialized Stripe client singleton |
 | `supabase.ts` | Supabase client for JWT verification |
+| `weather.ts` | OpenWeather weather verification (historical + current) |
 
 ---
 
@@ -316,21 +317,29 @@ Tenant ──────────┬── User ─────────�
                  └── PolicyPlan
 ```
 
-### Core Models
+### Core Models (19 total)
 
 | Model | Key Fields | Relations |
 |-------|-----------|-----------|
 | **Tenant** | `id`, `name` (unique), `slug` (unique), `config` (JSON), `stripeCustomerId`, `billingEnabled` | → User, PolicyPlan, Farmer |
-| **User** | `id`, `tenantId`, `authId` (unique Stack ID), `email`, `role` (enum), `isActive` | → Tenant, → Farmer, → Notification, → ClaimDocument, → Claim (assigned officer) |
-| **Farmer** | `id`, `tenantId`, `userId` (unique), `fullName`, `cnicNumber` | → User, → LandParcel, → Policy, → Claim |
+| **User** | `id`, `tenantId`, `authId` (unique Supabase ID), `email`, `role` (enum), `isActive`, `customRoleId?` | → Tenant, → Farmer, → Notification, → CustomRole |
+| **Farmer** | `id`, `tenantId`, `userId` (unique), `fullName`, `cnicNumber` | → User, → LandParcel, → Policy, → Claim, → FarmerFieldValue |
 | **LandParcel** | `id`, `tenantId`, `farmerId`, `address`, `areaAcres`, `cropType`, `latitude`, `longitude` | → Farmer, → Policy |
-| **PolicyPlan** | `id`, `tenantId`, `name`, `cropType`, `coveragePerAcre`, `premiumRate`, `termMonths` | → Tenant, → Policy |
-| **Policy** | `id`, `policyNumber` (unique), `tenantId`, `farmerId`, `landParcelId`, `policyPlanId`, `coverageAmount`, `premiumAmount`, `status` (enum) | → Farmer, LandParcel, PolicyPlan, User (underwriter), Claim, Payment |
-| **Claim** | `id`, `claimNumber` (unique), `tenantId`, `policyId`, `farmerId`, `incidentType`, `claimedAmount`, `approvedAmount`, `status` (enum) | → Policy, Farmer, User (officer), ClaimDocument, ClaimStatusHistory, Payment |
-| **ClaimDocument** | `id`, `claimId`, `url` (Cloudinary), `type`, `ocrExtractedData` (JSON) | → Claim, User (uploader) |
+| **PolicyPlan** | `id`, `tenantId`, `name`, `cropType`, `coveragePerAcre`, `premiumRate`, `termMonths`, `config` (auto-trigger JSON) | → Tenant, → Policy |
+| **Policy** | `id`, `policyNumber` (unique), `tenantId`, `farmerId`, `landParcelId`, `policyPlanId`, `coverageAmount`, `premiumAmount`, `status` (enum) | → Farmer, LandParcel, PolicyPlan, User, Claim, Payment |
+| **Claim** | `id`, `claimNumber` (unique), `tenantId`, `policyId`, `farmerId`, `incidentType`, `claimedAmount`, `approvedAmount`, `fraudScore`, `fraudVerdict`, `status` (enum) | → Policy, Farmer, User (officer), ClaimDocument, ClaimStatusHistory, Payment, FraudAuditLog |
+| **ClaimDocument** | `id`, `claimId`, `url` (Cloudinary), `type`, `fileHash`, `fileSize`, `mimeType`, `ocrExtractedData` (JSON) | → Claim, User (uploader) |
 | **ClaimStatusHistory** | `id`, `claimId`, `fromStatus`, `toStatus`, `note` | → Claim, User (changer) |
+| **FraudAuditLog** | `id`, `claimId`, `score`, `verdict`, `flags` (JSON), `ruleResults` (JSON), `rawMetadata` (JSON) | → Claim (immutable) |
+| **AutoTriggerLog** | `id`, `tenantId`, `policyId`, `landParcelId`, `ndviPre`, `ndviPost`, `ndviDrop`, `weatherEvent`, `triggerMatched`, `claimId?` | → Policy, LandParcel |
 | **Payment** | `id`, `tenantId`, `policyId?`, `claimId?`, `type` (PREMIUM/PAYOUT), `amount`, `gatewayTransactionId`, `status` | → Policy?, Claim? |
 | **Notification** | `id`, `userId`, `type`, `title`, `message`, `isRead`, `relatedEntityType?`, `relatedEntityId?` | → User |
+| **TenantField** | `id`, `tenantId`, `fieldKey`, `label`, `fieldType`, `options` (JSON), `required`, `order` | → Tenant (dynamic farmer fields) |
+| **FarmerFieldValue** | `id`, `farmerId`, `fieldKey`, `value` (JSON) | → Farmer (dynamic field values) |
+| **CustomRole** | `id`, `tenantId`, `name`, `description`, `permissions` (JSON array), `isActive` | → Tenant, → User (IAM) |
+| **UsageLog** | `id`, `tenantId`, `service`, `tier`, `model`, `cost`, `totalCost`, `createdAt` | → Tenant (usage-based billing) |
+| **Invoice** | `id`, `tenantId`, `invoiceNumber` (unique), `totalAmount`, `status`, `dueDate`, `paidAt` | → Tenant, → InvoiceLineItem |
+| **InvoiceLineItem** | `id`, `invoiceId`, `description`, `amount`, `quantity` | → Invoice |
 
 ### Indexes
 
@@ -341,21 +350,42 @@ Tenant ──────────┬── User ─────────�
 - `PolicyPlan` → index on `tenantId`, `isActive`
 - `Policy` → index on `tenantId`, `farmerId`, `status`
 - `Claim` → index on `tenantId`, `policyId`, `status`, `farmerId`
-- `ClaimDocument` → index on `claimId`
+- `ClaimDocument` → index on `claimId`, `fileHash`
 - `ClaimStatusHistory` → index on `claimId`
 - `Payment` → index on `tenantId`, `policyId`, `claimId`
 - `Notification` → index on `[userId, isRead]`
+- `TenantField` → index on `tenantId`
+- `FarmerFieldValue` → index on `farmerId`
+- `CustomRole` → index on `tenantId`
+- `UsageLog` → index on `tenantId`, `createdAt`
+- `Invoice` → index on `tenantId`, `status`
 
 ### Role Enum
 
 | Role | Access Level |
 |------|-------------|
 | `PLATFORM_ADMIN` | Cross-tenant: manage all tenants, seed plans, manage staff |
-| `TENANT_ADMIN` | Single tenant: manage staff, dashboard, settings, import |
-| `UNDERWRITER` | Approve/review policies |
-| `CLAIMS_OFFICER` | Assign claims, update claim status (approve/reject) |
-| `FIELD_AGENT` | Register farmers, assist with claims |
-| `FARMER` | Self-service: view own profile, policies, claims |
+| `TENANT_ADMIN` | Single tenant: manage staff, dashboard, settings, import, view fraud reports |
+| `UNDERWRITER` | Create/update policy plans, verify land documents |
+| `CLAIMS_OFFICER` | Assign claims, update claim status, request evidence |
+| `SENIOR_CLAIMS_OFFICER` | All Claims Officer + override decisions, approve high-value claims, trigger payouts |
+| `FIELD_AGENT` | Register farmers, virtual + physical inspections, upload evidence |
+| `FARMER` | Self-service: buy policies, file claims, upload documents, track status |
+
+### Custom Roles (IAM — 40+ Permissions)
+
+Tenants can create custom roles with granular permissions beyond the 7 fixed roles:
+
+| Permission Prefix | Example Permissions |
+|------------------|-------------------|
+| `claim:` | `view:own`, `view:all`, `create`, `approve`, `reject`, `assign`, `payout` |
+| `farmer:` | `create`, `view`, `update`, `delete` |
+| `policy:` | `view`, `purchase`, `cancel` |
+| `plan:` | `view`, `create`, `update`, `delete` |
+| `user:` | `create`, `view`, `update`, `deactivate` |
+| `payment:` | `view`, `refund` |
+| `settings:` | `view`, `update` |
+| `import:` | `execute`, `view` |
 
 ---
 
@@ -484,10 +514,12 @@ export async function getClaim(claimId: string, tenantId: string) {
 
 | Setting | Value |
 |---------|-------|
-| Max attempts per job | 3 |
+| Max attempts per job | 3 (fraud: tier-dependent) |
 | Backoff | Exponential, 2s initial delay |
 | `removeOnComplete` | Keep last 100 |
 | `removeOnFail` | Keep last 50 |
+| Fraud concurrency | 5 |
+| Fraud rate limit | 10 requests/second |
 
 ### 7.3 Worker Responsibilities
 
@@ -496,8 +528,9 @@ export async function getClaim(claimId: string, tenantId: string) {
 | **OCR Worker** | `jobs/ocrWorker.ts` | Updates `ClaimDocument.ocrExtractedData` with simulated OCR results |
 | **Notification Worker** | `jobs/notificationWorker.ts` | Creates DB notification row + sends email via Nodemailer SMTP |
 | **Import Worker** | `jobs/importWorker.ts` | Routes to `importPolicyPlans()` or `importFarmersPolicies()` based on job type |
-| **Fraud Worker** | `jobs/fraud-worker.ts` | Runs async fraud analysis (OpenRouter AI, Sentinel NDVI, OpenWeather) |
-| **Auto-Trigger Worker** | `jobs/auto-trigger-worker.ts` | Every 6h: checks NDVI + weather for auto-trigger policies |
+| **Fraud Worker** | `jobs/fraud-worker.ts` | Runs async fraud analysis — tier-based OpenRouter AI, Sentinel NDVI, OpenWeather, CNIC cross-check |
+| **Auto-Trigger Worker** | `jobs/auto-trigger-worker.ts` | Every 6h: checks NDVI + weather for auto-trigger policies, creates claims |
+| **Billing Worker** | `jobs/billingWorker.ts` | Monthly: aggregates UsageLog → generates invoices → sends email notifications |
 
 ---
 
@@ -564,7 +597,7 @@ requireRole("CLAIMS_OFFICER")                   // Claims processing
 | **BullMQ** | Async job processing | `lib/bullmq.ts` | 5 queues (OCR, notif, import, fraud, auto-trigger) |
 | **OpenRouter** | AI/LLM image + text analysis (fraud detection) | `lib/openrouter.ts` | Free models available (Gemini Flash) |
 | **Sentinel Hub** | Satellite NDVI vegetation monitoring | `lib/sentinel.ts` | 30K requests/month free |
-| **OpenWeather** | Weather event verification for claims | — | 60 calls/min free |
+| **OpenWeather** | Weather event verification for claims | `lib/weather.ts` | 60 calls/min free (historical via One Call 3.0) |
 
 ### Neon Adapter Fallback
 
@@ -598,7 +631,7 @@ AIMS/
 ├── jest.config.js                # Jest config with ts-jest preset
 ├── prisma.config.ts              # Prisma 7.x datasource config
 ├── prisma/
-│   ├── schema.prisma             # Database schema (11 models, 4 enums)
+│   ├── schema.prisma             # Database schema (19 models, 5 enums)
 │   └── migrations/
 │       ├── init/
 │       │   └── migration.sql     # Initial schema migration
@@ -684,17 +717,36 @@ AIMS/
 │   │   ├── tenantSettings.validator.ts
 │   │   ├── import.validator.ts
 │   │   └── billing.validator.ts
+│   │   ├── tenantFields.validator.ts
+│   │   └── iam.validator.ts
+│   ├── config/
+│   │   ├── fraudTiers.ts         # 3-tier fraud detection model config
+│   │   ├── permissions.ts        # 40+ permission definitions
+│   │   ├── paymentGateways.ts    # Gateway adapter factory
+│   │   └── autoTriggerConfig.ts  # NDVI + weather thresholds
+│   ├── utils/
+│   │   ├── fraud-helpers.ts      # Fraud score weights, verdict mapping
+│   │   ├── generators.ts         # Claim/policy number generation
+│   │   ├── geo.ts                # Haversine distance calculator
+│   │   └── logger.ts             # Pino logger with request ID
 │   └── jobs/
 │       ├── ocrWorker.ts          # OCR processing (simulated)
 │       ├── notificationWorker.ts # In-app + email notification dispatch
 │       ├── importWorker.ts       # Bulk import (CSV/JSON) routing
 │       ├── fraud-worker.ts       # Async fraud analysis (AI, satellite, weather)
-│       └── auto-trigger-worker.ts # 6-hour parametric monitoring cron
+│       ├── auto-trigger-worker.ts # 6-hour parametric monitoring cron
+│       └── billingWorker.ts      # Monthly invoice generation cron
 ├── tests/
 │   ├── setup.js                  # Test environment setup (DATABASE_URL)
 │   ├── setup.ts                  # Test setup (unused, kept for reference)
-│   ├── claims.test.ts            # 8 tests: claim submission, state machine, auth guard
-│   └── tenantIsolation.test.ts   # 18 tests: multi-tenant isolation across all modules
+│   ├── claims.test.ts            # 8 tests: claim submission, state machine
+│   ├── tenantIsolation.test.ts   # 18 tests: multi-tenant isolation
+│   ├── utils.test.ts             # 19 tests: generators, fraud scoring, geo
+│   ├── iam.test.ts               # 14 tests: custom role CRUD, permissions
+│   ├── billing.test.ts           # 14 tests: invoices, payments, subscription
+│   ├── farmers.test.ts           # 8 tests: farmer CRUD, CNIC, custom fields
+│   ├── policyPlans.test.ts       # 14 tests: plans, quote calc, config merge
+│   └── smoke.test.ts             # 39 tests: full system, 14 areas
 ├── PROGRESS.md                   # Development progress tracker
 ├── REPORT.md                     # Comprehensive project report
 ├── ARCHITECTURE.md               # ← This document
@@ -706,16 +758,18 @@ AIMS/
 
 | Layer | Count |
 |-------|-------|
-| `routes/` | 14 |
-| `controllers/` | 15 (14 domain + 1 webhook) |
-| `services/` | 14 |
-| `validators/` | 14 |
+| `routes/` | 17 (14 domain + 3 webhook/gateway) |
+| `controllers/` | 17 (15 domain + 2 webhook) |
+| `services/` | 17 (14 domain + 3 cross-cutting) |
+| `validators/` | 16 |
 | `middleware/` | 5 |
-| `lib/` | 8 |
-| `jobs/` | 5 |
+| `lib/` | 9 |
+| `config/` | 4 |
+| `utils/` | 4 |
+| `jobs/` | 6 |
 | `scripts/` | 1 |
-| `tests/` | 4 |
-| **Total `.ts` files** | **71** |
+| `tests/` | 9 |
+| **Total `.ts` files** | **~105** |
 
 ---
 
@@ -919,36 +973,17 @@ return dashboard;
 
 ### Test Suites
 
-| Suite | File | Tests | Type |
-|-------|------|-------|------|
-| Claims | `tests/claims.test.ts` | 8 | Integration (Supertest) |
-| Tenant Isolation | `tests/tenantIsolation.test.ts` | 18 | Unit (mocked Prisma) |
-| **Total** | | **26** | |
-
-### Claims Test Suite (8 tests)
-
-Full request-response integration tests using Supertest with the real Express app:
-
-- Health check
-- Claim submission (with duplicate detection)
-- Claim status state machine (SUBMITTED → UNDER_REVIEW → APPROVED → PAID)
-- Role-based access control (FARMER can't update status, CLAIMS_OFFICER can)
-- Invalid state transitions (can't skip from SUBMITTED to APPROVED)
-- Tenant isolation (can't access another tenant's claims)
-
-### Tenant Isolation Test Suite (18 tests)
-
-Unit tests with mocked Prisma (no database required):
-
-- **Auth service** (2 tests): User lookup, role change within tenant
-- **Farmer service** (2 tests): Profile creation with tenant scoping
-- **Land parcel service** (2 tests): CRUD scoped by tenant
-- **Policy plan service** (2 tests): Query scoped by tenant
-- **Policy service** (2 tests): Quotation with tenant-specific plans
-- **Claim service** (2 tests): Claim state machine transition
-- **Document service** (2 tests): Cloudinary upload + OCR enqueue
-- **Notification service** (2 tests): List + mark-read tenant-scoped
-- **Role guard** (2 tests): requireRole() and requireTenantAccess() middleware behavior
+| Suite | File | Tests | Type | Coverage |
+|-------|------|-------|------|----------|
+| Claims | `tests/claims.test.ts` | 8 | Integration (Supertest) | State machine, duplicate detection, claim numbers |
+| Tenant Isolation | `tests/tenantIsolation.test.ts` | 18 | Unit (mocked) | Tenant isolation across all 8 service modules |
+| Utils | `tests/utils.test.ts` | 19 | Unit | Generators, fraud scoring, geo distances |
+| IAM | `tests/iam.test.ts` | 14 | Unit (mocked) | Custom role CRUD, permission resolution |
+| Billing | `tests/billing.test.ts` | 14 | Unit (mocked) | Invoice CRUD, payment flow, subscription |
+| Farmers | `tests/farmers.test.ts` | 8 | Unit (mocked) | Farmer CRUD, CNIC uniqueness, custom fields |
+| Policy Plans | `tests/policyPlans.test.ts` | 14 | Unit (mocked) | Plan CRUD, quote calc, config merging |
+| Smoke | `tests/smoke.test.ts` | 39 | Integration | Full system: 14 areas, all imports, security headers |
+| **Total** | **8 files** | **134** | | |
 
 ### Testing Pattern
 
@@ -985,6 +1020,6 @@ npm run test:watch          # Watch mode
 
 ---
 
-> **Document version:** 1.0  
-> **Last updated:** July 2026  
+> **Document version:** 2.0  
+> **Last updated:** July 21, 2026  
 > **Project:** Agricultural Insurance Management System (AIMS)

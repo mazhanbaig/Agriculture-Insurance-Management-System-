@@ -1,12 +1,13 @@
 # AIMS — Agricultural Insurance Management System
 ## Complete Project Plan (Final Version)
 
-> **Version:** 3.0 (Production Ready)  
+> **Version:** 4.0 (Production — Live on Railway)  
 > **Methodology:** Modular Monolith (Backend) + Decoupled Next.js (Frontend)  
 > **Goal:** Build a fully functional, secure, and scalable agricultural insurance SaaS  
-> **Status:** ✅ Backend Complete — 71 source files, 58+ endpoints, 26/26 tests passing  
+> **Status:** ✅ Backend Complete — ~105 source files, 84+ endpoints, 134/134 tests passing  
+> **Live:** [agriculture-insurance-management-system.up.railway.app](https://agriculture-insurance-management-system.up.railway.app/health)  
 > **Date:** July 2026
-> **Last Updated:** July 18, 2026
+> **Last Updated:** July 21, 2026
 
 ---
 
@@ -257,23 +258,29 @@ Our **killer feature** that competitors don't have:
 
 ## 6. Database Schema Overview
 
-### Core Models (13 Models)
+### Core Models (19 Models)
 
 | Model | Purpose | Key Fields |
 |-------|---------|-----------|
 | **Tenant** | Insurance company | slug, name, config, stripeCustomerId |
 | **User** | Global user | email, authId (Supabase UUID), role |
 | **Farmer** | Customer | tenantId, userId, cnicNumber, bankAccount |
-| **LandParcel** | Land details | farmerId, latitude, longitude, areaAcres |
-| **PolicyPlan** | Insurance product | tenantId, name, coveragePerAcre, premiumRate, config |
-| **Policy** | Active policy | tenantId, policyNumber, farmerId, planId, status |
-| **Claim** | Claim submission | tenantId, claimNumber, policyId, status, fraudScore, fraudVerdict |
+| **LandParcel** | Land details | farmerId, latitude, longitude, areaAcres, cropType |
+| **PolicyPlan** | Insurance product | tenantId, name, coveragePerAcre, premiumRate, config (auto-trigger JSON) |
+| **Policy** | Active policy | tenantId, policyNumber, farmerId, planId, status, certificateUrl |
+| **Claim** | Claim submission | tenantId, claimNumber, policyId, status, fraudScore, fraudVerdict, incidentType |
 | **FraudAuditLog** | Immutable fraud logs | claimId, score, verdict, flags, ruleResults, rawMetadata |
-| **ClaimDocument** | Uploaded files | claimId, url, hash, fileSize, mimeType |
+| **ClaimDocument** | Uploaded files | claimId, url, fileHash, fileSize, mimeType |
 | **ClaimStatusHistory** | Audit trail | claimId, fromStatus, toStatus, changedByUserId |
 | **Payment** | Financial ledger | tenantId, policyId, claimId, type, amount, status |
 | **AutoTriggerLog** | Satellite monitoring | tenantId, policyId, ndviPre, ndviPost, ndviDrop, triggerMatched |
 | **Notification** | In-app + email | userId, type, title, message, isRead |
+| **TenantField** | Dynamic farmer fields | tenantId, fieldKey, label, fieldType, options, required |
+| **FarmerFieldValue** | Custom field values | farmerId, fieldKey, value |
+| **CustomRole** | Custom IAM roles | tenantId, name, permissions (JSON), isActive |
+| **UsageLog** | Billing usage tracking | tenantId, service, tier, model, cost, totalCost |
+| **Invoice** | Monthly billing | tenantId, invoiceNumber, totalAmount, status, dueDate |
+| **InvoiceLineItem** | Invoice details | invoiceId, description, amount, quantity |
 
 ### Key Relationships
 
@@ -773,9 +780,9 @@ The frontend queries `/api/settings` to get the JSON schema and renders form fie
 ### CI/CD Pipeline (GitHub Actions)
 
 1. **Lint & Type Check:** `npm run lint && tsc --noEmit`
-2. **Run Tests:** `npm test` (26 tests)
+2. **Run Tests:** `npm test` (134 tests)
 3. **Build:** `npm run build`
-4. **Deploy Backend:** Push to Railway/AWS
+4. **Deploy Backend:** Push to Railway (auto-deploys from GitHub)
 5. **Deploy Frontend:** Push to Vercel
 
 ---
@@ -786,9 +793,15 @@ The frontend queries `/api/settings` to get the JSON schema and renders form fie
 
 | Test Type | Files | Count | Purpose |
 |-----------|-------|-------|---------|
-| **Unit** | `tests/tenantIsolation.test.ts` | 18 | Tenant isolation across all services |
 | **Integration** | `tests/claims.test.ts` | 8 | Claim state machine & API |
-| **Total** | 2 files | **26** | Full test coverage |
+| **Unit (mocked)** | `tests/tenantIsolation.test.ts` | 18 | Tenant isolation across all services |
+| **Unit** | `tests/utils.test.ts` | 19 | Generators, fraud scoring, geo |
+| **Unit (mocked)** | `tests/iam.test.ts` | 14 | Custom role CRUD, permissions |
+| **Unit (mocked)** | `tests/billing.test.ts` | 14 | Invoice, payments, subscription |
+| **Unit (mocked)** | `tests/farmers.test.ts` | 8 | Farmer CRUD, CNIC, custom fields |
+| **Unit (mocked)** | `tests/policyPlans.test.ts` | 14 | Plans, quote calc, config merge |
+| **Integration** | `tests/smoke.test.ts` | 39 | Full system, 14 areas |
+| **Total** | 8 files | **134** | Full test coverage |
 
 ### Test Coverage Goals
 
@@ -826,6 +839,15 @@ npm test -- --coverage   # With coverage report
 | M8 | Claims Officer & Field Agent | ✅ Complete | State machine, assignments, evidence upload, status history |
 | M9 | Payout Automation (Stripe Connect) | ✅ Complete | Payout trigger, Stripe transfers, double-entry ledger |
 | M10 | Dashboard & Auto-Trigger (X-Factor) | ✅ Complete | Dashboard aggregates (Redis-cached), auto-trigger cron, satellite monitoring |
+| P1 | Dynamic Farmer Fields | ✅ Complete | TenantField model, CRUD, customData on farmer registration |
+| P2 | Tiered Fraud Detection | ✅ Complete | FORGE/TITAN/GOAT tiers, fallback chain, usage logging |
+| P3 | Custom Roles (IAM) | ✅ Complete | CustomRole model, 40+ permissions, requirePermission middleware |
+| P4 | Multi-Payment Gateways | ✅ Complete | Stripe/Easypaisa/JazzCash adapters, gateway factory |
+| P5 | Usage-Based Billing | ✅ Complete | Invoice model, monthly cron, usage/invoice endpoints |
+| P6 | Auto-Trigger Improvements | ✅ Complete | Retry with backoff, monitoring stats, fraud queue integration |
+| P7 | Frontend Integration | ✅ Complete | Typed API client, 4 sample React components |
+| P8 | Testing & Hardening | ✅ Complete | 134 tests, smoke tests, env validation, security headers |
+| L1 | Layer 1 Forensics | ✅ Complete | SHA-256 dedup, MIME magic bytes, CNIC cross-check, weather history |
 
 ### Detailed Module Breakdown
 

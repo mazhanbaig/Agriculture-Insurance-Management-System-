@@ -221,7 +221,103 @@
 - [x] Updated `PROGRESS.md` — added Phase X-5
 - [x] Wrote proper `README.md` — setup guide, env vars, quick start
 
+## Phase 1: Dynamic Farmer Fields (July 2026)
+- [x] Added `TenantField` + `FarmerFieldValue` Prisma models
+- [x] Created `config/tenantFields.ts` — field type constants
+- [x] Created `routes/tenantFields.routes.ts`, `controllers/tenantFields.controller.ts`, `services/tenantFields.service.ts`
+- [x] Created `validators/tenantFields.validator.ts` — Zod schemas for field CRUD
+- [x] Extended farmer registration to accept `customData` validated against tenant's field schema
+- [x] Added `GET /api/v1/farmers/fields` endpoint for frontend to query field schema
+- [x] Atomic field value storage with Prisma transactions
+- Endpoints: CRUD (5) + GET farmer fields (1)
+
+## Phase 2: Tiered Fraud Detection (July 2026)
+- [x] Created `src/config/fraudTiers.ts` — FORGE (Gemini Flash), TITAN (GPT-4o mini), GOAT (GPT-4o)
+- [x] Extended `Tenant.config` to store `fraudTier` (default: `forge`)
+- [x] Refactored `fraud.service.ts` — `runAsyncFraudAnalysis()` uses tier config for model selection
+- [x] Implemented `analyzeWithFallback()` in `openrouter.ts` — primary model → fallback chain with retry
+- [x] Added usage logging for each external call (OpenRouter, Sentinel, OpenWeather)
+- [x] Created API endpoints: GET /settings/fraud-tiers, GET /settings/fraud-tier, PATCH /settings/fraud-tier
+- [x] Created `UsageLog` Prisma model for billing tracking
+
+## Phase 3: Custom Roles / IAM (July 2026)
+- [x] Added `CustomRole` Prisma model (tenantId, name, permissions JSON, isActive)
+- [x] Added `customRoleId` to User model
+- [x] Created `config/permissions.ts` — 40+ granular permission definitions
+- [x] Implemented `requirePermission` middleware — checks user's role permissions
+- [x] Created `iam.service.ts`, `iam.controller.ts`, `iam.routes.ts`, `iam.validator.ts`
+- [x] CRUD endpoints: GET/POST/PATCH/DELETE /api/v1/iam/roles
+- [x] Assignment endpoint: PATCH /api/v1/users/:id/role
+- [x] Permission resolution: PLATFORM_ADMIN bypass, FARMER limited scope
+
+## Phase 4: Multi-Payment Gateways (July 2026)
+- [x] Defined `PaymentGateway` interface — createPaymentIntent, confirmPayment, createPayout, handleWebhook
+- [x] Implemented `StripeGateway` (live), `EasypaisaGateway` (stub), `JazzCashGateway` (stub)
+- [x] Created `config/paymentGateways.ts` — gateway factory `getPaymentGateway(tenantId)`
+- [x] Refactored `payments.service.ts` — uses gateway adapter instead of direct Stripe calls
+- [x] Added API endpoints: GET /settings/payment-gateways, PATCH /settings/payment-gateway
+- [x] Added webhook routes: /api/v1/webhooks/stripe, /easypaisa, /jazzcash
+
+## Phase 5: Usage-Based Billing (July 2026)
+- [x] Added `UsageLog`, `Invoice`, `InvoiceLineItem` Prisma models
+- [x] Created `services/usage.service.ts` — `logUsage()` records each external call with cost
+- [x] Created `jobs/billingWorker.ts` — monthly cron aggregates usage → generates invoices
+- [x] API endpoints: GET /billing/usage, GET /billing/invoices, GET /billing/invoices/:id
+- [x] Invoice PDF generation — line items with tier base fee + per-call costs
+- [x] Email notification on invoice generation (via Nodemailer)
+
+## Phase 6: Auto-Trigger Improvements (July 2026)
+- [x] Refactored `auto-trigger-worker.ts` — retries with exponential backoff, monitoring stats
+- [x] Created `config/autoTriggerConfig.ts` — NDVI thresholds, weather check config
+- [x] Improved NDVI + weather checking with configurable thresholds
+- [x] Auto-creates claim + runs fraud detection when trigger matched
+- [x] Auto-approves claim if `fraudScore < 30`
+- [x] Logs every check in `AutoTriggerLog`
+
+## Phase X-6: Layer 1 Forensics (July 2026)
+- [x] **Weather history fix** — Changed OpenWeather from current-weather to historical One Call 3.0 timemachine endpoint
+  - `src/lib/weather.ts` — shared weather utility: `checkWeatherForClaim()` (historical with fallback) + `checkWeatherNow()` (current weather for auto-trigger)
+  - Fraud detection now checks weather at the **incident date**, not today
+  - Expanded severe event keywords from 4 to 16
+- [x] **Document forensics** — SHA-256 hash dedup + magic byte MIME validation
+  - Added `fileHash String?` + `@@index([fileHash])` to `ClaimDocument` model
+  - Single file read: buffer reused for both hash and magic bytes
+  - 11 MIME types validated from magic bytes (JPEG, PNG, WebP, HEIC, TIFF, MP4, MOV, WebM, AVI, PDF)
+  - RIFF header correctly differentiates WebP from AVI (bytes 0-3 vs 8-11)
+  - Duplicate file → 409 with `DUPLICATE_FILE` error
+- [x] **CNIC cross-check** — Extracts CNIC from uploaded documents and cross-verifies with farmer record
+  - OpenRouter OCR called via `analyzeWithFallback` with retry
+  - Regex `/\b\d{5}-?\d{7}-?\d{1}\b/` finds 13-digit CNIC pattern (not phone numbers)
+  - Mismatch → +25 fraud score, `CNIC_MISMATCH` flag in audit trail
+  - Added to `checksPerformed` array in fraud audit log
+
+## Phase 7: Frontend Integration (July 2026)
+- [x] Created `frontend/src/lib/api-client.ts` — Typed API client for all 84+ endpoints
+- [x] Sample React components for: Dynamic Farmer Form, Custom Role Manager, Billing Dashboard, Fraud Tier Selector
+- [x] Swagger/OpenAPI specs (aggregated from Zod schemas)
+
+## Phase 8: Testing & Hardening (July 2026)
+- [x] Expanded test suite from 26 to 134 tests (8 test files)
+- [x] Added: `utils.test.ts` (19) — generators, fraud scoring, geo distances
+- [x] Added: `iam.test.ts` (14) — custom role CRUD, permission resolution
+- [x] Added: `billing.test.ts` (14) — invoice CRUD, payment flow, subscription
+- [x] Added: `farmers.test.ts` (8) — farmer CRUD, CNIC uniqueness, custom fields
+- [x] Added: `policyPlans.test.ts` (14) — plan CRUD, quote calc, config merging
+- [x] Added: `smoke.test.ts` (39) — full system: 14 areas, all imports, security headers
+- [x] Rate limiters wired to all routes (authLimiter, uploadLimiter)
+- [x] Env var validation on startup (8 required vars)
+- [x] Request ID tracking (UUID + x-request-id header)
+- [x] Redis connectivity check on boot
+- [x] Security headers via helmet
+
+## Deployment (July 2026)
+- [x] Railway deployment live: https://agriculture-insurance-management-system.up.railway.app
+- [x] Railway config: `railway.toml` with Railpack builder + ON_FAILURE restart policy
+- [x] Prisma 7 Neon adapter fallback (getNeonPrisma factory)
+- [x] Database seeding script (`seed.ts`) — creates default tenant + PLATFORM_ADMIN
+- [x] Seed run against Railway Neon database — `default` tenant + `admin@aims.app` user active
+
 ## Known Remaining Issues
 - [ ] Redis ECONNREFUSED in test output — mock Redis to clean this up
 - [ ] Prisma mock incomplete — should add `user` methods for auth middleware
-- [ ] Test coverage only 26/60+ — 12 of 14 services untested
+- [ ] Some HEIC/HEIF files may fail magic byte detection due to variable ISOBMFF box length (can add more `ftyp` variants)
