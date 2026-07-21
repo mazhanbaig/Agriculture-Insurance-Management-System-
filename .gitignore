@@ -1,6 +1,8 @@
 node_modules/
 dist/
 .env
+# Root Postman collection (moved to postman/)
+/AIMS.postman_collection.json
 *.log
 /tmp/
 coverage/

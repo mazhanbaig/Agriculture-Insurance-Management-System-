@@ -340,6 +340,8 @@ All endpoints prefixed with `/api/v1`.
 | Check | Weight | Description |
 |-------|--------|-------------|
 | Duplicate claim | **+40** | Same policy, within 30 days |
+| Document hash (SHA-256) | **+25** | Duplicate file detected (same hash within same claim) |
+| File type spoof | **+20** | MIME type from magic bytes doesn't match extension |
 | Claim amount mismatch | **+10** | Claimed amount vs expected based on loss % |
 | Farmer history | **+15** | >3 claims in last year |
 
@@ -350,8 +352,9 @@ Total sync score range: 0–100
 | Check | Weight | Service | Description |
 |-------|--------|---------|-------------|
 | AI Image Analysis | **+20** | OpenRouter | Is this a farm with visible crop damage? |
+| **CNIC Cross-Check** | **+25** | OpenRouter (OCR) | Extract CNIC from ID document, compare against farmer record |
 | Satellite NDVI | **+40** | Sentinel Hub | NDVI comparison (pre vs post incident) |
-| Weather Verification | **+30** | OpenWeather | Did the event occur at the location? |
+| Weather Verification | **+30** | OpenWeather | **Historical** weather at incident date (One Call 3.0 timemachine), falls back to current weather at lat/lon |
 
 #### Fraud Tier System
 
