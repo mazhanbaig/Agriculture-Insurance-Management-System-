@@ -8,6 +8,7 @@ import {
 } from "../utils/fraud-helpers";
 import { haversineDistance } from "../utils/geo";
 import { compareNDVI } from "../lib/sentinel";
+import { checkWeatherForClaim } from "../lib/weather";
 import { getFraudTierConfig, type FraudTier } from "../config/fraudTiers";
 import { logUsage } from "./usage.service";
 import * as openRouterLib from "../lib/openrouter";
@@ -214,7 +215,68 @@ export async function runAsyncFraudAnalysis(
     }
   }
 
-  // 5. Satellite NDVI check
+  // 5. CNIC cross-check — extract CNIC from uploaded documents and verify against farmer record
+  if (claim.farmer?.cnicNumber) {
+    const cnicDocs = claim.documents.filter((d: any) => d.type === "photo");
+    const cnicImage = cnicDocs[0]; // Pick first photo document for OCR
+
+    if (cnicImage) {
+      try {
+        const cnicPrompt = "Extract all CNIC/NIC/ID card numbers from this document. A Pakistani CNIC is 13 digits in format XXXXX-XXXXXXX-X or 13 consecutive digits. Reply with ONLY the number (digits only, no dashes) if found, or 'NO_CNIC' if no ID number is visible.";
+
+        const { result: ocrResult, modelUsed } = await openRouterLib.analyzeWithFallback(
+          cnicImage.url,
+          cnicPrompt,
+          tierConfig.primaryModel,
+          tierConfig.fallbackModel
+        );
+
+        // Log OCR usage
+        await logUsage({
+          tenantId,
+          service: "openrouter",
+          tier: fraudTierName,
+          model: modelUsed,
+          quantity: 1,
+          metadata: { claimId, documentId: cnicImage.id, check: "cnic_crosscheck" },
+        });
+
+        // Extract 13-digit CNIC from OCR result using regex for robustness
+        // Handles both raw 13-digit runs and formatted XXXXX-XXXXXXX-X patterns
+        const cnicPattern = ocrResult.match(/\b\d{5}-?\d{7}-?\d{1}\b/);
+        const extractedCnic = cnicPattern ? cnicPattern[0].replace(/\D/g, "") : null;
+
+        if (extractedCnic) {
+          const farmerCnic = claim.farmer.cnicNumber.replace(/\D/g, "");
+          const cnicMatch = extractedCnic === farmerCnic;
+
+          ruleResults["CNIC_MISMATCH"] = {
+            triggered: !cnicMatch,
+            extractedCnic,
+            farmerCnic,
+            match: cnicMatch,
+            rawOcr: ocrResult.slice(0, 100),
+          };
+
+          if (!cnicMatch) {
+            additionalScore += FRAUD_CHECK_WEIGHTS.CNIC_MISMATCH;
+            flags.push("CNIC_MISMATCH");
+          }
+        } else {
+          ruleResults["CNIC_MISMATCH"] = {
+            triggered: false,
+            error: "No CNIC pattern found in document OCR",
+            rawOcr: ocrResult.slice(0, 100),
+          };
+        }
+      } catch (error) {
+        logger.error({ error, documentId: cnicImage.id }, "CNIC extraction failed");
+        ruleResults["CNIC_MISMATCH"] = { triggered: false, error: String(error) };
+      }
+    }
+  }
+
+  // 6. Satellite NDVI check
   const landParcel = claim.policy?.landParcel;
   if (landParcel?.latitude && landParcel?.longitude && tierConfig.satelliteEnabled) {
     try {
@@ -244,44 +306,49 @@ export async function runAsyncFraudAnalysis(
     }
   }
 
-  // 6. Weather verification (via OpenWeather)
-  if (claim.incidentLocation && tierConfig.weatherEnabled) {
+  // 6. Weather verification (via OpenWeather — checks HISTORICAL weather at incident date)
+  if (tierConfig.weatherEnabled) {
     try {
-      const weatherApiKey = process.env.OPENWEATHER_API_KEY;
-      if (weatherApiKey) {
-        const weatherUrl = `https://api.openweathermap.org/data/2.5/weather?q=${encodeURIComponent(claim.incidentLocation)}&appid=${weatherApiKey}`;
-        const response = await fetch(weatherUrl);
-        if (response.ok) {
-          const weatherData = (await response.json()) as any;
-          const conditions = (weatherData.weather || []).map((w: any) => w.main).join(", ");
-          const isSevere = ["Thunderstorm", "Tornado", "Hurricane", "Extreme"].some((c) =>
-            conditions.includes(c)
-          );
+      const landParcel = claim.policy?.landParcel;
+      const weatherResult = await checkWeatherForClaim(
+        landParcel?.latitude,
+        landParcel?.longitude,
+        claim.incidentDate
+      );
 
-          // Log weather usage
-          await logUsage({
-            tenantId,
-            service: "openweather",
-            tier: fraudTierName,
-            quantity: 1,
-            metadata: { claimId, location: claim.incidentLocation, conditions },
-          });
+      // Log weather usage
+      await logUsage({
+        tenantId,
+        service: "openweather",
+        tier: fraudTierName,
+        quantity: 1,
+        metadata: {
+          claimId,
+          location: claim.incidentLocation,
+          method: weatherResult.method,
+          confirmed: weatherResult.confirmed,
+          event: weatherResult.event,
+        },
+      });
 
-          if (!isSevere) {
-            additionalScore += FRAUD_CHECK_WEIGHTS.WEATHER_TRUTH;
-            flags.push("WEATHER_NO_SEVERE_EVENT");
-            ruleResults["WEATHER_TRUTH"] = {
-              triggered: true,
-              conditions,
-              detail: "No severe weather event detected at incident location",
-            };
-          } else {
-            ruleResults["WEATHER_TRUTH"] = { triggered: false, conditions };
-          }
-        }
+      ruleResults["WEATHER_TRUTH"] = {
+        triggered: weatherResult.confirmed ? false : weatherResult.method !== "none",
+        method: weatherResult.method,
+        event: weatherResult.event,
+        detail: weatherResult.confirmed
+          ? `Severe weather confirmed: ${weatherResult.event}`
+          : weatherResult.method !== "none"
+            ? "No severe weather event detected at incident location"
+            : "Weather data unavailable — check skipped",
+      };
+
+      if (!weatherResult.confirmed && weatherResult.method !== "none") {
+        additionalScore += FRAUD_CHECK_WEIGHTS.WEATHER_TRUTH;
+        flags.push("WEATHER_NO_SEVERE_EVENT");
       }
     } catch (error) {
       logger.error({ error }, "Weather check failed");
+      ruleResults["WEATHER_TRUTH"] = { triggered: false, error: String(error) };
     }
   }
 
@@ -305,7 +372,7 @@ export async function runAsyncFraudAnalysis(
       ruleResults,
       rawMetadata: {
         checkType: "async",
-        checksPerformed: ["AI_IMAGE", "SATELLITE_NDVI", "WEATHER"].length,
+        checksPerformed: ["AI_IMAGE", "CNIC", "SATELLITE_NDVI", "WEATHER"].length,
         additionalScore,
         finalScore,
       },

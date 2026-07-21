@@ -239,10 +239,12 @@ model ClaimDocument {
   type             String
   fileSize         Int?
   mimeType         String?
+  fileHash         String?
   ocrExtractedData Json?
   uploadedAt       DateTime @default(now())
 
   @@index([claimId])
+  @@index([fileHash])
 }
 
 model ClaimStatusHistory {

@@ -4,8 +4,9 @@ import { prisma } from "../lib/prisma";
 import { compareNDVI } from "../lib/sentinel";
 import { generateClaimNumber } from "../utils/generators";
 import { notificationQueue, autoTriggerQueue, fraudQueue } from "../lib/bullmq";
-import { withRetry, mergeAutoTriggerConfig, type AutoTriggerConfig } from "../config/autoTriggerConfig";
+import { mergeAutoTriggerConfig, type AutoTriggerConfig } from "../config/autoTriggerConfig";
 import { enqueueAsyncFraudAnalysis, runSyncForensics } from "../services/fraud.service";
+import { checkWeatherNow } from "../lib/weather";
 import logger from "../utils/logger";
 
 // ─── Monitoring counters ──────────────────────────────────────────────
@@ -54,38 +55,21 @@ interface WeatherResult {
 
 /**
  * Check if weather confirms a disaster event at the given location.
- * Uses withRetry for exponential backoff on failure.
+ * Uses lat/lon coordinates from the land parcel for more accurate results.
+ * Auto-trigger monitors CURRENT conditions (NDVI drop is happening now),
+ * so current weather check is appropriate here.
  */
-async function checkWeatherConfirmation(location: string): Promise<WeatherResult> {
-  const weatherApiKey = process.env.OPENWEATHER_API_KEY;
-  if (!weatherApiKey) return { confirmed: false };
-
+async function checkWeatherConfirmation(
+  lat: number | null | undefined,
+  lon: number | null | undefined
+): Promise<WeatherResult> {
   try {
-    return await withRetry(
-      async () => {
-        const url = `https://api.openweathermap.org/data/2.5/weather?q=${encodeURIComponent(location)}&appid=${weatherApiKey}`;
-        const response = await fetch(url);
-        if (!response.ok) {
-          throw new Error(`Weather API responded with ${response.status}`);
-        }
-
-        const weatherData = (await response.json()) as any;
-        const conditions = (weatherData.weather || []).map((w: any) => w.main).join(", ");
-        const severeEvents = ["Thunderstorm", "Tornado", "Hurricane", "Extreme", "Flood", "Storm"];
-        const isSevere = severeEvents.some((e) => conditions.includes(e));
-
-        return {
-          confirmed: isSevere,
-          event: isSevere ? conditions : undefined,
-          data: weatherData,
-        };
-      },
-      {
-        context: `checkWeather(${location})`,
-        maxRetries: 3,
-        baseDelayMs: 2000,
-      }
-    );
+    const result = await checkWeatherNow(lat, lon);
+    return {
+      confirmed: result.confirmed,
+      event: result.event,
+      data: result.data,
+    };
   } catch {
     return { confirmed: false };
   }
@@ -160,8 +144,11 @@ async function checkPolicyAutoTrigger(
   let weatherEvent: string | undefined;
   let weatherData: any = null;
 
-  if (autoTriggerConfig.weatherCheck && policy.landParcel.address) {
-    const weatherResult = await checkWeatherConfirmation(policy.landParcel.address);
+  if (autoTriggerConfig.weatherCheck) {
+    const weatherResult = await checkWeatherConfirmation(
+      policy.landParcel?.latitude,
+      policy.landParcel?.longitude
+    );
     weatherConfirmed = weatherResult.confirmed;
     weatherEvent = weatherResult.event;
     weatherData = weatherResult.data;
