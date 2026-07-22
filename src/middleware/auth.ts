@@ -122,6 +122,19 @@ export async function requireAuth(
       throw new AppError("User does not belong to the specified tenant", 403);
     }
 
+    // Check tenant status — non-ACTIVE tenants cannot use the API
+    const tenantRecord = await prisma.tenant.findUnique({
+      where: { id: localUser.tenantId },
+      select: { status: true },
+    });
+    if (tenantRecord && tenantRecord.status !== "ACTIVE") {
+      const statusMsg =
+        tenantRecord.status === "PENDING_APPROVAL"
+          ? "Your tenant account is pending approval. Please wait for a platform administrator to activate it."
+          : "Your tenant account has been suspended. Contact your platform administrator.";
+      throw new AppError(statusMsg, 403);
+    }
+
     req.user = {
       id: localUser.id,
       tenantId: localUser.tenantId,
@@ -175,7 +188,7 @@ export async function resolveTenant(
 
     if (slug) {
       const tenant = await prisma.tenant.findUnique({ where: { slug } });
-      if (tenant && tenant.isActive) {
+      if (tenant && tenant.status === "ACTIVE") {
         req.tenant = {
           id: tenant.id,
           name: tenant.name,

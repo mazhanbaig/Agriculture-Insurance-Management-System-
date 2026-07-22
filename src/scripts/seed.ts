@@ -16,7 +16,7 @@ async function seed() {
     create: {
       name: "Default Insurance",
       slug: "default",
-      isActive: true,
+      status: "ACTIVE",
       billingEnabled: false,
       config: {
         branding: {

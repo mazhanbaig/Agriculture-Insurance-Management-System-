@@ -7,6 +7,12 @@ datasource db {
   relationMode = "prisma"
 }
 
+enum TenantStatus {
+  PENDING_APPROVAL
+  ACTIVE
+  SUSPENDED
+}
+
 enum Role {
   PLATFORM_ADMIN
   TENANT_ADMIN
@@ -37,17 +43,18 @@ enum PaymentType {
 }
 
 model Tenant {
-  id                  String   @id @default(uuid())
-  name                String   @unique
-  slug                String   @unique
+  id                  String        @id @default(uuid())
+  name                String        @unique
+  slug                String        @unique
   logoUrl             String?
-  isActive            Boolean  @default(true)
+  status              TenantStatus  @default(PENDING_APPROVAL)
+  isActive            Boolean       @default(true)
   config              Json?
-  stripeCustomerId    String?  @unique
-  stripeSubscriptionId String? @unique
-  billingEnabled      Boolean  @default(false)
-  createdAt           DateTime @default(now())
-  updatedAt           DateTime @updatedAt
+  stripeCustomerId    String?       @unique
+  stripeSubscriptionId String?       @unique
+  billingEnabled      Boolean       @default(false)
+  createdAt           DateTime      @default(now())
+  updatedAt           DateTime      @updatedAt
 
   users        User[]
   policyPlans  PolicyPlan[]
@@ -58,6 +65,7 @@ model Tenant {
   invoices     Invoice[]
 
   @@index([slug])
+  @@index([status])
 }
 
 model User {

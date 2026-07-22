@@ -14,7 +14,7 @@ export async function getSettings(tenantId: string) {
       slug: true,
       logoUrl: true,
       config: true,
-      isActive: true,
+      status: true,
       billingEnabled: true,
       createdAt: true,
     },
@@ -30,7 +30,7 @@ export async function updateSettings(tenantId: string, data: {
 }) {
   const tenant = await prisma.tenant.findUnique({ where: { id: tenantId } });
   if (!tenant) throw new AppError("Tenant not found", 404);
-  if (!tenant.isActive) throw new AppError("Tenant is not active", 400);
+  if (tenant.status !== "ACTIVE") throw new AppError("Tenant is not active", 400);
 
   const updateData: Record<string, any> = {};
   if (data.name !== undefined) updateData.name = data.name;
@@ -50,7 +50,7 @@ export async function updateSettings(tenantId: string, data: {
       slug: true,
       logoUrl: true,
       config: true,
-      isActive: true,
+      status: true,
     },
   });
 }
