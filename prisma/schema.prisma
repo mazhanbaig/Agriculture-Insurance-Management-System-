@@ -409,9 +409,11 @@ model UsageLog {
   tier        String   // forge, titan, goat
   model       String?  // e.g. google/gemini-2.0-flash-001
   quantity    Float    // number of calls / images analyzed
-  cost        Float    // per-unit cost
-  markup      Float    // markup amount
-  totalCost   Float    // cost + markup
+  cost        Float    // per-unit cost (provider base cost — kept for backward compat)
+  markup      Float    // markup amount (kept for backward compat)
+  totalCost   Float    // cost + markup (kept for backward compat)
+  rawCost     Float    // actual provider cost (replaces `cost` going forward)
+  billedCost  Float    // rawCost * 1.10 (replaces `totalCost` going forward, flat 10% markup)
   metadata    Json?    // claimId, document URLs, etc.
   createdAt   DateTime @default(now())
 

@@ -64,20 +64,21 @@ export async function generateTenantInvoice(
     });
   }
 
-  // Aggregate usage by service
-  const byService = new Map<string, { calls: number; totalCost: number }>();
+  // Aggregate usage by service (use billedCost if available, fall back to totalCost)
+  const byService = new Map<string, { calls: number; totalBilledCost: number; totalRawCost: number }>();
   for (const log of usageLogs) {
-    const existing = byService.get(log.service) || { calls: 0, totalCost: 0 };
+    const existing = byService.get(log.service) || { calls: 0, totalBilledCost: 0, totalRawCost: 0 };
     existing.calls += log.quantity;
-    existing.totalCost += log.totalCost;
+    existing.totalBilledCost += log.billedCost ?? log.totalCost;
+    existing.totalRawCost += log.rawCost ?? log.cost;
     byService.set(log.service, existing);
   }
 
   for (const [service, data] of byService) {
-    const unitPrice = data.calls > 0 ? Math.round((data.totalCost / data.calls) * 10000) / 10000 : 0;
+    const unitPrice = data.calls > 0 ? Math.round((data.totalBilledCost / data.calls) * 10000) / 10000 : 0;
     lineItems.push({
       description: `${service.charAt(0).toUpperCase() + service.slice(1)} API Calls (${tierConfig.label})`,
-      amount: Math.round(data.totalCost * 100) / 100,
+      amount: Math.round(data.totalBilledCost * 100) / 100,
       quantity: data.calls,
       unitPrice,
     });
