@@ -329,15 +329,18 @@ model Payment {
 }
 
 model FraudAuditLog {
-  id          String   @id @default(uuid())
-  claimId     String
-  claim       Claim    @relation(fields: [claimId], references: [id])
-  score       Int
-  verdict     String
-  flags       Json?
-  ruleResults Json?
-  rawMetadata Json?
-  createdAt   DateTime @default(now())
+  id             String   @id @default(uuid())
+  claimId        String
+  claim          Claim    @relation(fields: [claimId], references: [id])
+  score          Int
+  verdict        String
+  flags          Json?
+  ruleResults    Json?
+  rawMetadata    Json?
+  sentinelResult Json?
+  weatherResult  Json?
+  llmResult      Json?
+  createdAt      DateTime @default(now())
 
   @@index([claimId])
   @@index([score])
