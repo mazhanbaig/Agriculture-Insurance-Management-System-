@@ -6,9 +6,7 @@ export async function createTenant(req: Request, res: Response, next: NextFuncti
     const result = await platformService.createTenant(req.body);
     res.status(201).json({ status: "success", data: result });
   } catch (error) { next(error); }
-}
-
-/**
+}/**
  * Public signup — no auth required.
  */
 export async function signupTenant(req: Request, res: Response, next: NextFunction) {
@@ -19,7 +17,11 @@ export async function signupTenant(req: Request, res: Response, next: NextFuncti
       data: result,
       message: "Tenant created and pending approval. You will be notified once approved.",
     });
-  } catch (error) { next(error); }
+  } catch (error) {
+    // Return the actual error message for debugging
+    const message = error instanceof Error ? error.message : String(error);
+    res.status(500).json({ status: "error", message: `Signup failed: ${message}` });
+  }
 }
 
 /**
