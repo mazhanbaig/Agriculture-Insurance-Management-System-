@@ -65,11 +65,3 @@ prisma = globalForPrisma.prisma ?? getPrisma();
 if (process.env.NODE_ENV !== "production") globalForPrisma.prisma = prisma;
 
 export { prisma };
-
-/**
- * @deprecated Use `getPrisma()` or the exported `prisma` singleton instead.
- * Kept for backward compatibility.
- */
-export async function getNeonPrisma(): Promise<PrismaClient> {
-  return getPrisma();
-}
