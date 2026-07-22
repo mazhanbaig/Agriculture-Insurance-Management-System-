@@ -17,11 +17,7 @@ export async function signupTenant(req: Request, res: Response, next: NextFuncti
       data: result,
       message: "Tenant created and pending approval. You will be notified once approved.",
     });
-  } catch (error) {
-    // DEBUG: Return actual error message to diagnose production issue
-    const errMsg = error instanceof Error ? error.message : String(error);
-    res.status(500).json({ status: "error", message: `[DEBUG] ${errMsg}` });
-  }
+  } catch (error) { next(error); }
 }
 
 /**
