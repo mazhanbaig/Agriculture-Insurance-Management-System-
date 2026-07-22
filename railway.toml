@@ -14,7 +14,9 @@
     # Prisma 7 requires Node.js 20.19+. Railpack defaults to 18 for some projects.
     RAILPACK_NODE_VERSION = "20"
 
-  # prisma generate is part of the npm build script — no separate buildCommand needed.
+  # prisma generate is part of the npm build script — the start script runs npm run build.
+  # Railpack auto-detects Node.js but may not run the build script; the start script
+  # includes it as a safety net.
 
 [deploy]
   healthcheckPath = "/health"
