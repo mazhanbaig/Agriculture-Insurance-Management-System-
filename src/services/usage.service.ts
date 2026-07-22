@@ -36,7 +36,7 @@ export async function logUsage(params: {
   }
 
   const rawCost = costPerUnit * quantity;
-  const billedCost = Math.round(rawCost * 1.10 * 100) / 100; // Flat 10% markup, rounded to cents
+  const billedCost = Math.round(rawCost * 1.10 * 10000) / 10000; // Flat 10% markup, rounded to 4 decimal places
   const markup = billedCost - rawCost;
 
   await prisma.usageLog.create({
