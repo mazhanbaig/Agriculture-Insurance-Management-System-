@@ -23,6 +23,13 @@ enum Role {
   FARMER
 }
 
+enum PolicyRequestStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  CONVERTED
+}
+
 enum PolicyStatus {
   ACTIVE
   EXPIRED
@@ -87,8 +94,9 @@ model User {
   notifications       Notification[]
   claimStatusChanges  ClaimStatusHistory[]
   uploadedDocuments   ClaimDocument[]
-  assignedClaims      Claim[]                @relation("AssignedOfficer")
-  underwrittenPolicies Policy[]               @relation("Underwriter")
+  assignedClaims         Claim[]          @relation("AssignedOfficer")
+  underwrittenPolicies   Policy[]         @relation("Underwriter")
+  reviewedPolicyRequests PolicyRequest[]
 
   @@unique([tenantId, authId])
   @@unique([tenantId, email])
@@ -116,10 +124,11 @@ model Farmer {
   profilePhotoUrl   String?
   createdAt         DateTime @default(now())
 
-  landParcels LandParcel[]
-  policies    Policy[]
-  claims      Claim[]
-  fieldValues FarmerFieldValue[]
+  landParcels     LandParcel[]
+  policies        Policy[]
+  claims          Claim[]
+  fieldValues     FarmerFieldValue[]
+  policyRequests  PolicyRequest[]
 
   @@unique([tenantId, cnicNumber])
   @@index([tenantId])
@@ -143,7 +152,8 @@ model LandParcel {
   district        String?
   createdAt       DateTime @default(now())
 
-  policies Policy[]
+  policies       Policy[]
+  policyRequests PolicyRequest[]
 
   @@index([tenantId])
   @@index([farmerId])
@@ -165,11 +175,40 @@ model PolicyPlan {
   config          Json?
   createdAt       DateTime @default(now())
 
-  policies Policy[]
+  policies       Policy[]
+  policyRequests PolicyRequest[]
 
   @@unique([tenantId, name])
   @@index([tenantId])
   @@index([isActive])
+}
+
+// ─── Phase C: PolicyRequest (request-only purchase flow) ──────────
+
+model PolicyRequest {
+  id                String              @id @default(uuid())
+  tenantId          String
+  farmerId          String
+  farmer            Farmer              @relation(fields: [farmerId], references: [id])
+  landParcelId      String
+  landParcel        LandParcel          @relation(fields: [landParcelId], references: [id])
+  policyPlanId      String
+  policyPlan        PolicyPlan          @relation(fields: [policyPlanId], references: [id])
+  status            PolicyRequestStatus @default(PENDING)
+  requestedAt       DateTime            @default(now())
+  reviewedByUserId  String?
+  reviewedBy        User?               @relation(fields: [reviewedByUserId], references: [id])
+  reviewedAt        DateTime?
+  reviewNote        String?
+  convertedPolicyId String?
+  convertedPolicy   Policy?             @relation(fields: [convertedPolicyId], references: [id])
+  createdAt         DateTime            @default(now())
+  updatedAt         DateTime            @updatedAt
+
+  @@index([tenantId])
+  @@index([farmerId])
+  @@index([status])
+  @@index([convertedPolicyId])
 }
 
 model Policy {
@@ -194,8 +233,9 @@ model Policy {
   certificateUrl String?
   createdAt      DateTime     @default(now())
 
-  claims   Claim[]
-  payments Payment[]
+  claims         Claim[]
+  payments       Payment[]
+  policyRequests PolicyRequest[]
 
   @@index([tenantId])
   @@index([farmerId])

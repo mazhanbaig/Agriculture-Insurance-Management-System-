@@ -28,6 +28,7 @@ import webhookRoutes from "./routes/webhook.routes";
 import billingRoutes from "./routes/billing.routes";
 import tenantFieldRoutes from "./routes/tenantFields.routes";
 import iamRoutes from "./routes/iam.routes";
+import policyRequestRoutes from "./routes/policyRequests.routes";
 
 const logger = pino({ name: "aims" });
 const app = express();
@@ -120,6 +121,7 @@ app.use("/api/v1/import", importRoutes);
 app.use("/api/v1/billing", billingRoutes);
 app.use("/api/v1/settings/fields", tenantFieldRoutes);
 app.use("/api/v1/iam", iamRoutes);
+app.use("/api/v1/policy-requests", policyRequestRoutes);
 
 // Initialize background workers (only in non-test mode)
 if (process.env.NODE_ENV !== "test") {
