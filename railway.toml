@@ -17,6 +17,10 @@
   # prisma generate is part of the npm build script — no separate buildCommand needed.
 
 [deploy]
+  # Push schema changes to the database before starting the server.
+  # This ensures new models/fields from migrations are applied.
+  # Uses the DATABASE_URL env var set in Railway dashboard.
+  preStartCommand = "npx prisma db push --accept-data-loss"
   healthcheckPath = "/health"
   healthcheckTimeout = 30
   restartPolicyType = "ON_FAILURE"
