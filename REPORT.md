@@ -72,33 +72,35 @@ The **auto-trigger parametric model** continuously monitors satellite vegetation
 
 ## 3. Data Model
 
-### 19 Prisma Models
+### 20 Prisma Models (+ 6 Enums)
 
 | Model | Description | Tenant Scoped | Key Relations |
 |-------|-------------|---------------|---------------|
-| **Tenant** | Insurance company | — | Has users, farmers, plans, invoices |
+| **Tenant** | Insurance company (with status: PENDING_APPROVAL/ACTIVE/SUSPENDED) | — | Has users, farmers, plans, invoices |
 | **User** | Platform user (staff or farmer) | ✅ | Belongs to tenant, optional custom role |
 | **Farmer** | End customer | ✅ | Has land parcels, policies, claims |
 | **LandParcel** | GPS-mapped farmland | ✅ | Belongs to farmer |
 | **PolicyPlan** | Insurance product | ✅ | Config stores auto-trigger settings |
 | **Policy** | Purchased insurance | ✅ | Links farmer, plan, land parcel |
-| **Claim** | Damage/ loss report | ✅ | State machine: SUBMITTED → UNDER_REVIEW → APPROVED/REJECTED → PAID |
+| **Claim** | Damage/loss report | ✅ | State machine: SUBMITTED → UNDER_REVIEW → APPROVED/REJECTED → PAID |
 | **ClaimDocument** | Photos/videos/OCR | ✅ | Uploaded for claims |
 | **ClaimStatusHistory** | Immutable audit trail | ✅ | Tracks every status change |
-| **Payment** | Premium or payout | ✅ | Double-entry (PREMIUM/PAYOUT) |
-| **FraudAuditLog** | Immutable fraud records | — | Sync + async analysis results |
+| **Payment** | Premium or payout | ✅ | Double-entry (PREMIUM/PAYOUT) — feature-flagged off by default |
+| **FraudAuditLog** | Immutable fraud records (tier-separated: sentinel/weather/llm) | — | Each tier's result stored separately for auditability |
 | **AutoTriggerLog** | Satellite check audit | ✅ | Every 6-hour check logged |
 | **Notification** | In-app + email | — | User-scoped |
 | **TenantField** | Dynamic farmer fields | ✅ | Tenant configures custom form fields |
 | **FarmerFieldValue** | Custom field values | — | Links to farmer |
-| **UsageLog** | API call billing | ✅ | Per-call cost tracking |
+| **UsageLog** | API call billing (rawCost + billedCost at 10% markup) | ✅ | Flat 10% markup model, old tier multiplier deprecated |
 | **CustomRole** | IAM custom roles | ✅ | Granular permission definitions |
 | **Invoice** | Monthly billing | ✅ | Line items per invoice |
 | **InvoiceLineItem** | Invoice detail | — | Description, amount, quantity |
+| **PolicyRequest** | Purchase request flow | ✅ | PENDING → APPROVED/REJECTED → CONVERTED (to Policy) |
 
-### 5 Enums
+### 6 Enums
 
 ```typescript
+enum TenantStatus { PENDING_APPROVAL, ACTIVE, SUSPENDED }
 enum Role {
   PLATFORM_ADMIN, TENANT_ADMIN, UNDERWRITER, 
   CLAIMS_OFFICER, SENIOR_CLAIMS_OFFICER, FIELD_AGENT, FARMER
@@ -107,6 +109,7 @@ enum PolicyStatus { ACTIVE, EXPIRED, CANCELLED }
 enum ClaimStatus { SUBMITTED, UNDER_REVIEW, APPROVED, REJECTED, PAID }
 enum PaymentType { PREMIUM, PAYOUT }
 enum InvoiceStatus { DRAFT, SENT, PAID, OVERDUE, CANCELLED }
+enum PolicyRequestStatus { PENDING, APPROVED, REJECTED, CONVERTED }
 ```
 
 ---

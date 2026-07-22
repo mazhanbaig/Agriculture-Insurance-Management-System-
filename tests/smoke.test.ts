@@ -134,6 +134,7 @@ describe("🔥 SMOKE TEST: Full System Verification", () => {
         require("../src/services/tenantFields.service");
         require("../src/services/tenantSettings.service");
         require("../src/services/import.service");
+        require("../src/services/policyRequests.service");
       }).not.toThrow();
     });
 
@@ -158,7 +159,7 @@ describe("🔥 SMOKE TEST: Full System Verification", () => {
 
   // ─── 6. Route File Integrity ───────────────────────────────────
   describe("6. Route File Integrity", () => {
-    it("should import all 17 route files without error", () => {
+    it("should import all 18 route files without error", () => {
       expect(() => {
         require("../src/routes/auth.routes");
         require("../src/routes/farmers.routes");
@@ -177,6 +178,7 @@ describe("🔥 SMOKE TEST: Full System Verification", () => {
         require("../src/routes/billing.routes");
         require("../src/routes/tenantFields.routes");
         require("../src/routes/iam.routes");
+        require("../src/routes/policyRequests.routes");
       }).not.toThrow();
     });
   });
@@ -388,13 +390,13 @@ describe("🔥 SMOKE TEST: Full System Verification", () => {
 
   // ─── 14. Route Registration ──────────────────────────────────────
   describe("14. API Route Registration", () => {
-    it("should have all 17 route modules mounted", () => {
+    it("should have all 18 route modules mounted", () => {
       // Verify all route files exist by checking they export a Router
       const routes = [
         "auth", "farmers", "landParcels", "policyPlans", "policies",
         "claims", "documents", "payments", "notifications", "admin",
         "platform", "tenantSettings", "import", "webhook", "billing",
-        "tenantFields", "iam"
+        "tenantFields", "iam", "policyRequests"
       ];
       routes.forEach((route) => {
         expect(() => require(`../src/routes/${route}.routes`)).not.toThrow();
