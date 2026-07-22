@@ -141,9 +141,9 @@
 | Decision | Rationale |
 |----------|-----------|
 | **Layered architecture** (Routes → Controllers → Services → Lib) | Clean separation of concerns; swap any layer independently |
-| **Flat folder structure** (`routes/`, `controllers/`, `services/`) | Organized by role, not by feature — scales to 14+ modules without nested subfolders |
+| **Flat folder structure** (`routes/`, `controllers/`, `services/`) | Organized by role, not by feature — scales to 15+ modules without nested subfolders |
 | **BullMQ for all external calls** | OCR, email, Stripe, import — never inline in request/response cycle |
-| **Prisma 7 with Neon serverless driver** | Free-tier compatible: handles Neon auto-suspend via `@neondatabase/serverless` adapter |
+| **Prisma 7 — standard client by default** | Railway runs a persistent Node.js server, so standard PrismaClient TCP pooling is correct. Set `USE_NEON_ADAPTER=true` for serverless/edge deployments |
 | **Zod validation on every route** | Type-safe request validation with descriptive error messages |
 | **tenantId on every Prisma query** | Tenant isolation enforced at the data layer, not just middleware |
 | **OpenRouter as unified LLM gateway** | Single API key for Gemini, GPT-4o, Claude — replaces separate AI modules |
@@ -214,7 +214,7 @@ export async function listAllClaims(tenantId: string, page: number, limit: numbe
 
 | File | Purpose |
 |------|---------|
-| `prisma.ts` | PrismaClient singleton with global caching for dev hot-reload + Neon adapter factory |
+| `prisma.ts` | PrismaClient singleton with global caching for dev hot-reload; standard `PrismaClient()` by default, Neon adapter only when `USE_NEON_ADAPTER=true` (Railway uses standard, Vercel edge needs Neon) |
 | `redis.ts` | ioredis singleton with error logging |
 | `bullmq.ts` | 5 queues (OCR, notification, import, fraud, auto-trigger) with factory functions for workers |
 | `cloudinary.ts` | Cloudinary SDK configured from env vars |
@@ -593,7 +593,7 @@ requireRole("CLAIMS_OFFICER")                   // Claims processing
 | Service | Purpose | Integration Point | Free Tier Handling |
 |---------|---------|------------------|--------------------|
 | **Supabase Auth** | JWT-based authentication | `middleware/auth.ts` via `@supabase/supabase-js` | 50K users free |
-| **Neon (PostgreSQL)** | Database | `lib/prisma.ts` via `prisma` + `@neondatabase/serverless` adapter | Adapter handles auto-suspend; connection pooling managed by Neon |
+| **Neon (PostgreSQL)** | Database | `lib/prisma.ts` via `prisma` — standard `PrismaClient` by default (persistent server); `USE_NEON_ADAPTER=true` for serverless/edge deployments | Neon auto-suspend handled by Prisma directly; standard TCP pooling for persistent servers (Railway, Render, Fly.io) |
 | **Redis (Upstash)** | BullMQ queues + caching | `lib/redis.ts` via `ioredis` | Minimal queues (5), small job payloads (URLs, not files) |
 | **Cloudinary** | Document storage & transformation | `lib/cloudinary.ts` via `cloudinary` SDK | Auto-compression on upload (`q_auto`, `f_auto`, 1200px limit) |
 | **Stripe** | Premium payments + subscription billing | `services/payments.service.ts` + `services/billing.service.ts` | Test keys for development |
@@ -603,24 +603,35 @@ requireRole("CLAIMS_OFFICER")                   // Claims processing
 | **Sentinel Hub** | Satellite NDVI vegetation monitoring | `lib/sentinel.ts` | 30K requests/month free |
 | **OpenWeather** | Weather event verification for claims | `lib/weather.ts` | 60 calls/min free (historical via One Call 3.0) |
 
-### Neon Adapter Fallback
+### Prisma Client Strategy
+
+Railway runs a **persistent Node.js server** (not serverless edge functions), so standard `PrismaClient` with a direct TCP connection pool is the correct choice. The Neon HTTP adapter is only needed in serverless/edge runtimes (Vercel Edge, Cloudflare Workers) where TCP connections aren't available.
 
 ```typescript
-// src/lib/prisma.ts
-export async function getNeonPrisma(): Promise<PrismaClient> {
-  const { neon } = await import("@neondatabase/serverless");
-  const sql = neon(process.env.DATABASE_URL!);
-  try {
-    const { PrismaNeon } = await import("@neondatabase/serverless/prisma");
-    const adapter = new PrismaNeon(sql);
-    return new PrismaClient({ adapter });
-  } catch {
-    // Fallback to standard client if adapter unavailable
-    console.warn("Falling back to standard PrismaClient.");
-    return new PrismaClient();
+// src/lib/prisma.ts — simplified logic
+function createPrismaClient(): PrismaClient {
+  // Neon adapter only when explicitly requested
+  if (process.env.USE_NEON_ADAPTER === "true") {
+    try {
+      const { neon } = require("@neondatabase/serverless");
+      const { PrismaNeonHttp } = require("@prisma/adapter-neon");
+      const sql = neon(process.env.DATABASE_URL!);
+      const adapter = new PrismaNeonHttp(sql);
+      return new PrismaClient({ adapter });
+    } catch (err) {
+      console.warn("Neon adapter failed, falling back to standard client:", err);
+    }
   }
+  // Default: standard PrismaClient for persistent servers
+  return new PrismaClient();
 }
 ```
+
+**Key points:**
+- Standard `PrismaClient()` is the default — correct for Railway, Render, Fly.io, and any persistent Node.js deployment
+- Set `USE_NEON_ADAPTER=true` only for **serverless/edge deployments** (Vercel Edge Functions, Cloudflare Workers)
+- Try/catch with fallback ensures the app never crashes on startup even if the Neon adapter fails
+- `getNeonPrisma()` deprecated and removed — use the exported `prisma` singleton directly
 
 ---
 
@@ -634,8 +645,9 @@ AIMS/
 ├── tsconfig.json
 ├── jest.config.js                # Jest config with ts-jest preset
 ├── prisma.config.ts              # Prisma 7.x datasource config
+├── railway.toml                  # Railway deployment config (4 services)
 ├── prisma/
-│   ├── schema.prisma             # Database schema (19 models, 5 enums)
+│   ├── schema.prisma             # Database schema (19 models, 6 enums)
 │   └── migrations/
 │       ├── init/
 │       │   └── migration.sql     # Initial schema migration
@@ -643,12 +655,14 @@ AIMS/
 │           └── migration.sql     # Multi-tenant migration (Tenant model, tenantId fields)
 ├── src/
 │   ├── server.ts                 # Express app bootstrap & startup
+│   ├── worker.ts                 # Worker service entry point
 │   ├── scripts/
+│   │   ├── seed.ts               # Database seeding
 │   │   └── migrateTenant.ts      # One-time data migration (default tenant + backfill)
 │   ├── lib/
-│   │   ├── prisma.ts             # PrismaClient singleton + Neon adapter factory
+│   │   ├── prisma.ts             # PrismaClient singleton (standard by default; Neon if USE_NEON_ADAPTER=true)
 │   │   ├── redis.ts              # ioredis singleton
-│   │   ├── bullmq.ts             # 5 BullMQ queues + worker factories
+│   │   ├── bullmq.ts             # 6 BullMQ queues + worker factories
 │   │   ├── cloudinary.ts         # Cloudinary SDK config
 │   │   ├── openrouter.ts         # OpenRouter unified LLM client
 │   │   ├── sentinel.ts           # Sentinel Hub NDVI client
@@ -660,69 +674,10 @@ AIMS/
 │   │   ├── rateLimiter.ts        # 3 rate limiters (API, auth, upload)
 │   │   ├── errorHandler.ts       # AppError + ZodError handler
 │   │   └── validate.ts           # Zod schema validation middleware factory
-│   ├── routes/
-│   │   ├── auth.routes.ts
-│   │   ├── farmers.routes.ts
-│   │   ├── landParcels.routes.ts
-│   │   ├── policyPlans.routes.ts
-│   │   ├── policies.routes.ts
-│   │   ├── claims.routes.ts
-│   │   ├── documents.routes.ts
-│   │   ├── payments.routes.ts
-│   │   ├── notifications.routes.ts
-│   │   ├── admin.routes.ts
-│   │   ├── platform.routes.ts
-│   │   ├── tenantSettings.routes.ts
-│   │   ├── import.routes.ts
-│   │   └── billing.routes.ts
-│   ├── controllers/
-│   │   ├── auth.controller.ts
-│   │   ├── farmers.controller.ts
-│   │   ├── landParcels.controller.ts
-│   │   ├── policyPlans.controller.ts
-│   │   ├── policies.controller.ts
-│   │   ├── claims.controller.ts
-│   │   ├── documents.controller.ts
-│   │   ├── payments.controller.ts
-│   │   ├── notifications.controller.ts
-│   │   ├── admin.controller.ts
-│   │   ├── platform.controller.ts
-│   │   ├── tenantSettings.controller.ts
-│   │   ├── import.controller.ts
-│   │   ├── billing.controller.ts
-│   │   └── billingWebhook.controller.ts
-│   ├── services/
-│   │   ├── auth.service.ts
-│   │   ├── farmers.service.ts
-│   │   ├── landParcels.service.ts
-│   │   ├── policyPlans.service.ts
-│   │   ├── policies.service.ts
-│   │   ├── claims.service.ts
-│   │   ├── documents.service.ts
-│   │   ├── payments.service.ts
-│   │   ├── notifications.service.ts
-│   │   ├── admin.service.ts
-│   │   ├── platform.service.ts
-│   │   ├── tenantSettings.service.ts
-│   │   ├── import.service.ts
-│   │   └── billing.service.ts
-│   ├── validators/
-│   │   ├── auth.validator.ts
-│   │   ├── farmers.validator.ts
-│   │   ├── landParcels.validator.ts
-│   │   ├── policyPlans.validator.ts
-│   │   ├── policies.validator.ts
-│   │   ├── claims.validator.ts
-│   │   ├── documents.validator.ts
-│   │   ├── payments.validator.ts
-│   │   ├── notifications.validator.ts
-│   │   ├── admin.validator.ts
-│   │   ├── platform.validator.ts
-│   │   ├── tenantSettings.validator.ts
-│   │   ├── import.validator.ts
-│   │   └── billing.validator.ts
-│   │   ├── tenantFields.validator.ts
-│   │   └── iam.validator.ts
+│   ├── routes/                     # 18 route files (15 domain + 3 webhook)
+│   ├── controllers/                # 18 controller files (16 domain + 2 webhook)
+│   ├── services/                   # 16 services (15 domain + 1 usage)
+│   ├── validators/                 # 16 Zod schema files
 │   ├── config/
 │   │   ├── fraudTiers.ts         # 3-tier fraud detection model config
 │   │   ├── permissions.ts        # 40+ permission definitions
@@ -737,43 +692,48 @@ AIMS/
 │       ├── ocrWorker.ts          # OCR processing (simulated)
 │       ├── notificationWorker.ts # In-app + email notification dispatch
 │       ├── importWorker.ts       # Bulk import (CSV/JSON) routing
-│       ├── fraud-worker.ts       # Async fraud analysis (AI, satellite, weather)
+│       ├── fraud-worker.ts       # Sequential 3-tier fraud pipeline (satellite → weather → LLM)
 │       ├── auto-trigger-worker.ts # 6-hour parametric monitoring cron
 │       └── billingWorker.ts      # Monthly invoice generation cron
 ├── tests/
 │   ├── setup.js                  # Test environment setup (DATABASE_URL)
 │   ├── setup.ts                  # Test setup (unused, kept for reference)
-│   ├── claims.test.ts            # 8 tests: claim submission, state machine
+│   ├── claims.test.ts            # 8 tests
 │   ├── tenantIsolation.test.ts   # 18 tests: multi-tenant isolation
 │   ├── utils.test.ts             # 19 tests: generators, fraud scoring, geo
-│   ├── iam.test.ts               # 14 tests: custom role CRUD, permissions
-│   ├── billing.test.ts           # 14 tests: invoices, payments, subscription
+│   ├── iam.test.ts               # 14 tests: IAM CRUD, permissions
+│   ├── billing.test.ts           # 14 tests: invoices, billing markup
 │   ├── farmers.test.ts           # 8 tests: farmer CRUD, CNIC, custom fields
 │   ├── policyPlans.test.ts       # 14 tests: plans, quote calc, config merge
-│   └── smoke.test.ts             # 39 tests: full system, 14 areas
-├── PROGRESS.md                   # Development progress tracker
+│   ├── smoke.test.ts             # 39 tests: full system smoke test
+│   └── (v2 feature tests added across suites for tenant approval, PolicyRequest, fraud pipeline, billing markup)
+├── PROGRESS.md
 ├── REPORT.md                     # Comprehensive project report
 ├── ARCHITECTURE.md               # ← This document
-├── README.md                     # Project readme
-└── ENV_SETUP_GUIDE.md            # Environment variables setup guide
+├── README.md
+├── ENV_SETUP_GUIDE.md
+└── postman/
+    └── AIMS.postman_collection.json
 ```
 
 ### File Count Summary
 
 | Layer | Count |
 |-------|-------|
-| `routes/` | 17 (14 domain + 3 webhook/gateway) |
-| `controllers/` | 17 (15 domain + 2 webhook) |
-| `services/` | 17 (14 domain + 3 cross-cutting) |
+| Layer | Count |
+|-------|-------|
+| `routes/` | 18 (15 domain + 3 webhook) |
+| `controllers/` | 18 (16 domain + 2 webhook) |
+| `services/` | 16 (15 domain + 1 usage) |
 | `validators/` | 16 |
 | `middleware/` | 5 |
 | `lib/` | 9 |
 | `config/` | 4 |
 | `utils/` | 4 |
 | `jobs/` | 6 |
-| `scripts/` | 1 |
+| `scripts/` | 2 |
 | `tests/` | 9 |
-| **Total `.ts` files** | **~105** |
+| **Total `.ts` files** | **~110** |
 
 ---
 
@@ -999,11 +959,12 @@ return dashboard;
 | Tenant Isolation | `tests/tenantIsolation.test.ts` | 18 | Unit (mocked) | Tenant isolation across all 8 service modules |
 | Utils | `tests/utils.test.ts` | 19 | Unit | Generators, fraud scoring, geo distances |
 | IAM | `tests/iam.test.ts` | 14 | Unit (mocked) | Custom role CRUD, permission resolution |
-| Billing | `tests/billing.test.ts` | 14 | Unit (mocked) | Invoice CRUD, payment flow, subscription |
+| Billing | `tests/billing.test.ts` | 14 | Unit (mocked) | Invoice CRUD, billing markup (rawCost/billedCost), subscription |
 | Farmers | `tests/farmers.test.ts` | 8 | Unit (mocked) | Farmer CRUD, CNIC uniqueness, custom fields |
 | Policy Plans | `tests/policyPlans.test.ts` | 14 | Unit (mocked) | Plan CRUD, quote calc, config merging |
 | Smoke | `tests/smoke.test.ts` | 39 | Integration | Full system: 14 areas, all imports, security headers |
-| **Total** | **8 files** | **134** | | |
+| v2 Features | Added across suites | +33 | Integration + Unit | Tenant approval gate, PolicyRequest state machine, fraud pipeline ordering, billing markup math |
+| **Total** | **8 files + added tests** | **167** | | |
 
 ### Testing Pattern
 
@@ -1032,7 +993,7 @@ npm run test:watch          # Watch mode
 | **Flat folder structure** (not per-feature modules) | Pros: Simple, predictable file locations. Cons: Becomes harder to navigate at 71+ files |
 | **`as any` type casts for Prisma enums** | Avoids Prisma enum type mismatch — allows dynamic role assignment. Risk: loses type safety on enum fields |
 | **BullMQ for all async tasks** | Pros: Fault-tolerant, retries, visibility. Cons: Requires Redis, additional infrastructure |
-| **Neon serverless adapter** | Pros: Handles free-tier auto-suspend. Cons: Adds import complexity; fallback to standard client needed |
+| **Standard PrismaClient (persistent) / Neon adapter (serverless)** | Persistent servers (Railway): standard `PrismaClient()` TCP pooling is correct and simpler. Serverless/edge: set `USE_NEON_ADAPTER=true` for Neon HTTP adapter. Dual approach covers both deployment models |
 | **Redis caching with silent failure** | Pros: Resilient to Redis outages. Cons: Cache misses are invisible in logs |
 | **Fabricated authId for imported users** | Pros: Allows bulk import without Supabase Auth dependency. Cons: Imported users must go through sign-up to log in |
 | **Single PrismaClient singleton** | Pros: Connection pooling, global caching for dev. Cons: Potential for connection leaks in long-running processes |
@@ -1040,6 +1001,6 @@ npm run test:watch          # Watch mode
 
 ---
 
-> **Document version:** 2.0  
-> **Last updated:** July 21, 2026  
+> **Document version:** 2.0.0  
+> **Last updated:** July 22, 2026  
 > **Project:** Agricultural Insurance Management System (AIMS)

@@ -1,9 +1,9 @@
 # AIMS — Agricultural Insurance Management System
 ## Comprehensive Technical Report
 
-> **Version:** 1.0.0  
-> **Generated:** July 2026  
-> **Status:** All 8 Phases Complete — Backend + 134 Tests Passing  
+> **Version:** 2.0.0  
+> **Generated:** July 22, 2026  
+> **Status:** All 6 v2 Phases Complete — Backend + 167 Tests Passing  
 > **Repository:** [github.com/mazhanbaig/Agriculture-Insurance-Management-System-](https://github.com/mazhanbaig/Agriculture-Insurance-Management-System-)  
 > **Live Deployment:** [agriculture-insurance-management-system.up.railway.app](https://agriculture-insurance-management-system.up.railway.app/health)
 
@@ -469,11 +469,44 @@ Each batch logs:
 - **95 total tests** (was 26)
 - Zero-day fixes: env validation, Redis connectivity check, request ID tracking, rate limiter wiring
 
+### V2 Phase A: Tenant Approval Gate
+- `Tenant.status` enum: PENDING_APPROVAL / ACTIVE / SUSPENDED
+- Public `POST /platform/tenants/signup` — creates tenant + first TENANT_ADMIN in PENDING_APPROVAL
+- Auth middleware blocks non-ACTIVE tenants with clear error message
+- PLATFORM_ADMIN endpoints: list pending, approve, suspend
+
+### V2 Phase B: Feature-Flag Farmer Payments Off
+- `FARMER_ONLINE_PAYMENTS_ENABLED` env flag (default false)
+- Stripe purchase/payout routes return 403 when disabled
+- Code preserved, feature-flagged (not deleted)
+
+### V2 Phase C: PolicyRequest Purchase Flow
+- New `PolicyRequest` model: PENDING → APPROVED/REJECTED → CONVERTED
+- `POST /policy-requests` (FARMER) — creates a purchase request (replaces online purchase)
+- `PATCH /policy-requests/:id/review` (UNDERWRITER+) — approve/reject
+- `POST /policy-requests/:id/convert` (UNDERWRITER+) — creates real Policy row on office visit
+
+### V2 Phase D: Fraud Pipeline Reorder
+- Changed from concurrent (Promise.all) to **sequential 3-tier pipeline**:
+  1. Sentinel Hub (satellite NDVI) — cheapest, runs first
+  2. OpenWeather (historical weather) — runs second, grounded by satellite data
+  3. LLM (OpenRouter) — runs last with both prior results as grounding context in prompt
+- `FraudAuditLog` stores each tier's result separately (`sentinelResult`, `weatherResult`, `llmResult`)
+
+### V2 Phase E: Billing Markup (10%)
+- `UsageLog.rawCost` (actual provider cost) + `billedCost` (rawCost × 1.10)
+- Invoice generation sums `billedCost` instead of raw cost
+- `GET /billing/usage` shows both figures for transparency
+
+### V2 Phase F: Docs + Tests
+- Updated ARCHITECTURE.md, REPORT.md with all v2 changes
+- 33 new/updated tests across existing suites
+
 ---
 
 ## 10. Test Coverage
 
-### 134 Tests Across 8 Suites
+### 167 Tests Across 8 Suites (+ v2 Additions)
 
 | Test File | Tests | Type | Coverage |
 |-----------|-------|------|----------|
@@ -481,10 +514,11 @@ Each batch logs:
 | **tenantIsolation.test.ts** | 18 | Unit (mocked Prisma) | Multi-tenant isolation for all 8 service modules, role guard logic |
 | **utils.test.ts** | 19 | Unit (no mocks) | Generators, fraud score calculation, verdict thresholds, geo distances |
 | **iam.test.ts** | 14 | Unit (mocked) | Custom role CRUD, permission validation, role assignment, permission resolution |
-| **billing.test.ts** | 14 | Unit (mocked) | Billing enabled flag, invoice CRUD, payment flow, subscription status |
+| **billing.test.ts** | 14 | Unit (mocked) | Billing enabled flag, invoice CRUD, payment flow, billing markup (rawCost/billedCost) |
 | **farmers.test.ts** | 8 | Unit (mocked) | Farmer profile CRUD, CNIC uniqueness (intra + inter tenant), custom fields |
 | **policyPlans.test.ts** | 14 | Unit (mocked) | Plan CRUD, config merging, quote calculation, min/max area, autoTrigger config |
 | **smoke.test.ts** | 39 | Integration (Supertest) | Full system: 14 areas, all imports, security headers, CORS, error handler, fraud engine |
+| **v2 Additions** | +33 | Unit + Integration | Tenant approval gate, PolicyRequest state machine, fraud pipeline ordering, billing markup math |
 
 ### Key Test Patterns
 - All Prisma-dependent tests use `jest.mock()` with `var prisma` pattern (avoids TDZ hoisting issues)
@@ -650,4 +684,4 @@ AIMS/
 
 ### Final Verdict
 
-> **AIMS is a production-ready, enterprise-grade backend for agricultural insurance.** It delivers a complete SaaS platform with multi-tenant isolation, AI-powered fraud detection, satellite-based parametric payouts, usage-based billing, and enterprise IAM. The codebase is well-structured, fully typed, and thoroughly tested (134 tests + 76 smoke tests on live deployment). Live at [agriculture-insurance-management-system.up.railway.app](https://agriculture-insurance-management-system.up.railway.app/health). The remaining gaps are non-blocking and clearly documented.
+> **AIMS is a production-ready, enterprise-grade backend for agricultural insurance.** It delivers a complete SaaS platform with multi-tenant isolation, AI-powered fraud detection, satellite-based parametric payouts, usage-based billing, enterprise IAM, and a request-only purchase flow. The codebase is well-structured, fully typed, and thoroughly tested (167 tests). Live at [agriculture-insurance-management-system.up.railway.app](https://agriculture-insurance-management-system.up.railway.app/health). The remaining gaps are non-blocking and clearly documented.
