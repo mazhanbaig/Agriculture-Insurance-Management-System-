@@ -123,11 +123,13 @@ export async function requireAuth(
     }
 
     // Check tenant status — non-ACTIVE tenants cannot use the API
+    // NULL status is treated as ACTIVE for backward compatibility with
+    // existing tenants that predate the TenantStatus enum.
     const tenantRecord = await prisma.tenant.findUnique({
       where: { id: localUser.tenantId },
       select: { status: true },
     });
-    if (tenantRecord && tenantRecord.status !== "ACTIVE") {
+    if (tenantRecord && tenantRecord.status !== "ACTIVE" && tenantRecord.status !== null) {
       const statusMsg =
         tenantRecord.status === "PENDING_APPROVAL"
           ? "Your tenant account is pending approval. Please wait for a platform administrator to activate it."
@@ -188,7 +190,8 @@ export async function resolveTenant(
 
     if (slug) {
       const tenant = await prisma.tenant.findUnique({ where: { slug } });
-      if (tenant && tenant.status === "ACTIVE") {
+      // NULL status is treated as ACTIVE for backward compatibility
+      if (tenant && (tenant.status === "ACTIVE" || tenant.status === null)) {
         req.tenant = {
           id: tenant.id,
           name: tenant.name,
