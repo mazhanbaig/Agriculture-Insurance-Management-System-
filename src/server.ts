@@ -7,7 +7,6 @@ import pino from "pino";
 import { apiLimiter } from "./middleware/rateLimiter";
 import { errorHandler, AppError } from "./middleware/errorHandler";
 import { resolveTenant } from "./middleware/auth";
-import { getNeonPrisma } from "./lib/prisma";
 import { redis, checkRedisConnection } from "./lib/redis";
 import { handleWebhook } from "./controllers/billingWebhook.controller";
 
@@ -144,13 +143,9 @@ async function start() {
     }
   }
 
-  if (process.env.NODE_ENV === "production") {
-    const neonPrisma = await getNeonPrisma();
-    // Replace the global prisma instance with the Neon-adapted one
-    const prismaModule = await import("./lib/prisma");
-    (prismaModule as any).prisma = neonPrisma;
-    logger.info("Neon serverless adapter initialized");
-  }
+  // Neon serverless adapter is initialized lazily via prisma.ts's getPrisma() factory.
+  // It uses a try/catch fallback to standard PrismaClient if the adapter fails.
+  // No explicit replacement needed here — the lazy singleton handles it.
 
   const PORT = parseInt(process.env.PORT || "4000", 10);
   if (process.env.NODE_ENV !== "test") {
