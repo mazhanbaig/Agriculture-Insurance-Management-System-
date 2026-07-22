@@ -39,15 +39,19 @@ export async function createTenant(data: {
     },
   });
 
-  // Queue a welcome notification
-  await notificationQueue.add("tenant-created", {
-    userId: user.id,
-    type: "TENANT_CREATED",
-    title: "Tenant Created",
-    message: `Tenant "${tenant.name}" has been created. Welcome!`,
-    relatedEntityType: "Tenant",
-    relatedEntityId: tenant.id,
-  });
+  // Queue a welcome notification (non-critical — wrap to prevent crash)
+  try {
+    await notificationQueue.add("tenant-created", {
+      userId: user.id,
+      type: "TENANT_CREATED",
+      title: "Tenant Created",
+      message: `Tenant "${tenant.name}" has been created. Welcome!`,
+      relatedEntityType: "Tenant",
+      relatedEntityId: tenant.id,
+    });
+  } catch (notifError) {
+    logger.error({ error: notifError, tenantId: tenant.id }, "Failed to send welcome notification");
+  }
 
   // If billing is enabled globally, create Stripe customer for this tenant
   if (isBillingEnabled()) {
@@ -100,21 +104,25 @@ export async function signupTenant(data: {
     },
   });
 
-  // Notify platform admins about new signup
-  const platformAdmins = await prisma.user.findMany({
-    where: { role: "PLATFORM_ADMIN", isActive: true },
-    select: { id: true },
-  });
-
-  for (const admin of platformAdmins) {
-    await notificationQueue.add("tenant-signup", {
-      userId: admin.id,
-      type: "TENANT_SIGNUP",
-      title: "New Tenant Signup",
-      message: `Tenant "${tenant.name}" (${data.adminEmail}) has signed up and is awaiting approval.`,
-      relatedEntityType: "Tenant",
-      relatedEntityId: tenant.id,
+  // Notify platform admins about new signup (non-critical — wrap to prevent crash)
+  try {
+    const platformAdmins = await prisma.user.findMany({
+      where: { role: "PLATFORM_ADMIN", isActive: true },
+      select: { id: true },
     });
+
+    for (const admin of platformAdmins) {
+      await notificationQueue.add("tenant-signup", {
+        userId: admin.id,
+        type: "TENANT_SIGNUP",
+        title: "New Tenant Signup",
+        message: `Tenant "${tenant.name}" (${data.adminEmail}) has signed up and is awaiting approval.`,
+        relatedEntityType: "Tenant",
+        relatedEntityId: tenant.id,
+      });
+    }
+  } catch (notifError) {
+    logger.error({ error: notifError, tenantId: tenant.id }, "Failed to notify platform admins about signup");
   }
 
   logger.info({ tenantId: tenant.id, email: data.adminEmail }, "New tenant signup — pending approval");
@@ -137,21 +145,25 @@ export async function approveTenant(tenantId: string) {
     data: { status: "ACTIVE" },
   });
 
-  // Notify the TENANT_ADMIN(s) that they've been approved
-  const tenantAdmins = await prisma.user.findMany({
-    where: { tenantId, role: "TENANT_ADMIN", isActive: true },
-    select: { id: true },
-  });
-
-  for (const admin of tenantAdmins) {
-    await notificationQueue.add("tenant-approved", {
-      userId: admin.id,
-      type: "TENANT_APPROVED",
-      title: "Tenant Approved",
-      message: `Your tenant "${tenant.name}" has been approved. You can now log in and use the platform.`,
-      relatedEntityType: "Tenant",
-      relatedEntityId: tenant.id,
+  // Notify the TENANT_ADMIN(s) that they've been approved (non-critical)
+  try {
+    const tenantAdmins = await prisma.user.findMany({
+      where: { tenantId, role: "TENANT_ADMIN", isActive: true },
+      select: { id: true },
     });
+
+    for (const admin of tenantAdmins) {
+      await notificationQueue.add("tenant-approved", {
+        userId: admin.id,
+        type: "TENANT_APPROVED",
+        title: "Tenant Approved",
+        message: `Your tenant "${tenant.name}" has been approved. You can now log in and use the platform.`,
+        relatedEntityType: "Tenant",
+        relatedEntityId: tenant.id,
+      });
+    }
+  } catch (notifError) {
+    logger.error({ error: notifError, tenantId }, "Failed to notify tenant admins about approval");
   }
 
   logger.info({ tenantId }, "Tenant approved");
