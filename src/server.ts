@@ -144,7 +144,15 @@ if (process.env.NODE_ENV !== "test") {
 app.use(errorHandler);
 
 async function start() {
-  // Verify Redis connectivity on boot
+  const PORT = parseInt(process.env.PORT || "4000", 10);
+  if (process.env.NODE_ENV !== "test") {
+    const server = http.createServer(app);
+    const { initSocket } = await import("./lib/socket");
+    initSocket(server);
+    server.listen(PORT, () => logger.info(`Server running on port ${PORT}`));
+  }
+
+  // Async initialization — runs after server is already listening for health checks
   try {
     await checkRedisConnection();
     logger.info("Redis connection verified successfully");
@@ -155,25 +163,14 @@ async function start() {
     }
   }
 
-  // Neon serverless adapter is initialized lazily via prisma.ts's getPrisma() factory.
-  // It uses a try/catch fallback to standard PrismaClient if the adapter fails.
-  // No explicit replacement needed here — the lazy singleton handles it.
-
-  const PORT = parseInt(process.env.PORT || "4000", 10);
+  // Schedule background jobs (non-blocking)
   if (process.env.NODE_ENV !== "test") {
-    const server = http.createServer(app);
-    const { initSocket } = await import("./lib/socket");
-    initSocket(server);
-    server.listen(PORT, () => logger.info(`Server running on port ${PORT}`));
-    // Schedule background jobs
-    // Auto-trigger cron (every 6 hours)
     try {
       const { scheduleAutoTriggerCheck } = await import("./jobs/auto-trigger-worker");
       await scheduleAutoTriggerCheck();
     } catch (err) {
       logger.warn({ err }, "Failed to schedule auto-trigger check — cron not started");
     }
-    // Monthly billing cron (1st of month at 02:00 AM)
     try {
       const { scheduleMonthlyBilling } = await import("./jobs/billingWorker");
       await scheduleMonthlyBilling();
