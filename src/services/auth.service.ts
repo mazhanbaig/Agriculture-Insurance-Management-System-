@@ -53,9 +53,6 @@ export async function register(data: {
   role: string;
   tenantSlug?: string;
 }) {
-  const existing = await prisma.user.findUnique({ where: { email: data.email } });
-  if (existing) throw new AppError("Email already registered", 409);
-
   let tenantId: string | undefined;
   if (data.tenantSlug) {
     const tenant = await prisma.tenant.findUnique({ where: { slug: data.tenantSlug } });
@@ -69,10 +66,14 @@ export async function register(data: {
   const { data: authData, error } = await supabase.auth.signUp({
     email: data.email,
     password: data.password,
-    options: { data: { name: data.name } },
   });
 
-  if (error) throw new AppError(error.message, 400);
+  if (error) {
+    if (error.message.includes("already registered")) {
+      throw new AppError("Email already registered", 409);
+    }
+    throw new AppError(error.message, 400);
+  }
   if (!authData.user) throw new AppError("Failed to create user", 500);
 
   const user = await prisma.user.create({
@@ -80,10 +81,15 @@ export async function register(data: {
       tenantId: tenantId || "",
       authId: authData.user.id,
       email: data.email,
-      name: data.name,
       role: data.role as any,
     },
   });
+
+  if (data.role === "FARMER") {
+    await prisma.farmer.create({
+      data: { tenantId: tenantId || "", userId: user.id, fullName: data.name, cnicNumber: "0000000000000" },
+    });
+  }
 
   const { data: sessionData, error: sessionError } = await supabase.auth.signInWithPassword({
     email: data.email,
@@ -93,7 +99,7 @@ export async function register(data: {
   if (sessionError) throw new AppError("Account created but login failed", 500);
 
   return {
-    user: { id: user.id, email: user.email, name: user.name, role: user.role, tenantId: user.tenantId },
+    user: { id: user.id, email: user.email, role: user.role, tenantId: user.tenantId },
     accessToken: sessionData.session?.access_token,
     token: sessionData.session?.access_token,
   };
@@ -106,7 +112,10 @@ export async function login(email: string, password: string) {
   const authId = data.user.id;
   let user = await prisma.user.findUnique({ where: { authId } });
   if (!user) {
-    user = await prisma.user.findFirst({ where: { email } });
+    const defaultTenant = await prisma.tenant.findUnique({ where: { slug: "default" } });
+    user = await prisma.user.findFirst({
+      where: { email, tenantId: defaultTenant?.id || "" },
+    });
     if (user) {
       user = await prisma.user.update({
         where: { id: user.id },
@@ -121,14 +130,16 @@ export async function login(email: string, password: string) {
     data: { lastLoginAt: new Date() },
   });
 
+  const farmer = await prisma.farmer.findUnique({ where: { userId: user.id } });
+
   return {
     id: user.id,
     email: user.email,
-    name: user.name,
+    name: farmer?.fullName || user.email.split("@")[0],
     role: user.role,
     tenantId: user.tenantId,
-    farmerId: null,
-    avatar: null,
+    farmerId: farmer?.id || null,
+    avatar: farmer?.profilePhotoUrl || null,
     accessToken: data.session?.access_token,
     token: data.session?.access_token,
   };
@@ -141,32 +152,37 @@ export async function oauthCallback(data: {
   provider: string;
   providerAccountId: string;
 }) {
-  let user = await prisma.user.findFirst({ where: { email: data.email } });
+  const defaultTenant = await prisma.tenant.findUnique({ where: { slug: "default" } });
+  const tenantId = defaultTenant?.id || "";
+  const { email } = data;
+
+  let user = await prisma.user.findFirst({ where: { email, tenantId } });
   if (user) {
     user = await prisma.user.update({
       where: { id: user.id },
-      data: { lastLoginAt: new Date(), name: data.name || user.name },
+      data: { lastLoginAt: new Date() },
     });
   } else {
-    const defaultTenant = await prisma.tenant.findUnique({ where: { slug: "default" } });
     user = await prisma.user.create({
-      data: {
-        tenantId: defaultTenant?.id || "",
-        email: data.email,
-        name: data.name || data.email.split("@")[0],
-        role: "FARMER",
-      },
+      data: { tenantId, authId: `oauth_${data.provider}_${data.providerAccountId}`, email, role: "FARMER" },
+    });
+  }
+
+  const farmer = await prisma.farmer.findUnique({ where: { userId: user.id } });
+  if (!farmer && data.name) {
+    await prisma.farmer.create({
+      data: { tenantId, userId: user.id, fullName: data.name, cnicNumber: "0000000000000" },
     });
   }
 
   return {
     id: user.id,
     email: user.email,
-    name: user.name,
+    name: farmer?.fullName || data.name || user.email.split("@")[0],
     role: user.role,
     tenantId: user.tenantId,
-    farmerId: null,
-    needsSetup: !user.name || !user.tenantId,
+    farmerId: farmer?.id || null,
+    needsSetup: !user.tenantId,
   };
 }
 
@@ -184,23 +200,16 @@ export async function completeOAuthSetup(userId: string, data: {
 
   const updateData: any = { role: data.role as any };
   if (tenantId) updateData.tenantId = tenantId;
+  if (data.phone) updateData.phone = data.phone;
 
   const user = await prisma.user.update({
     where: { id: userId },
     data: updateData,
   });
 
-  if (data.phone) {
-    const farmer = await prisma.farmer.findUnique({ where: { userId: user.id } });
-    if (farmer) {
-      await prisma.farmer.update({ where: { id: farmer.id }, data: { phone: data.phone } });
-    }
-  }
-
   return {
     id: user.id,
     email: user.email,
-    name: user.name,
     role: user.role,
     tenantId: user.tenantId,
   };
