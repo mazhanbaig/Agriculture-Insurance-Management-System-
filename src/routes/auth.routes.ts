@@ -1,13 +1,11 @@
 import { Router } from "express";
 import { requireAuth } from "../middleware/auth";
 import { requireRole } from "../middleware/roleGuard";
-import { authLimiter } from "../middleware/rateLimiter";
 import * as authController from "../controllers/auth.controller";
 import { validate } from "../middleware/validate";
 import { updateProfileSchema, updateUserRoleSchema, registerSchema, loginSchema, forgotPasswordSchema, oauthCallbackSchema, oauthSetupSchema } from "../validators/auth.validator";
 
 const router = Router();
-router.use(authLimiter);
 
 // Public routes (no auth required)
 router.post("/register", validate(registerSchema), authController.register);
