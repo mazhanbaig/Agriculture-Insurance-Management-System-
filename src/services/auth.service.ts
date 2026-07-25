@@ -1,4 +1,5 @@
 import { prisma } from "../lib/prisma";
+import { supabase } from "../lib/supabase";
 import { AppError } from "../middleware/errorHandler";
 
 export async function getCurrentUser(userId: string) {
@@ -43,4 +44,172 @@ export async function listUsers(page: number, limit: number, tenantId?: string) 
     users,
     pagination: { page, limit, total, totalPages: Math.ceil(total / limit) },
   };
+}
+
+export async function register(data: {
+  name: string;
+  email: string;
+  password: string;
+  role: string;
+  tenantSlug?: string;
+}) {
+  const existing = await prisma.user.findUnique({ where: { email: data.email } });
+  if (existing) throw new AppError("Email already registered", 409);
+
+  let tenantId: string | undefined;
+  if (data.tenantSlug) {
+    const tenant = await prisma.tenant.findUnique({ where: { slug: data.tenantSlug } });
+    if (!tenant) throw new AppError("Tenant not found", 404);
+    tenantId = tenant.id;
+  } else {
+    const defaultTenant = await prisma.tenant.findUnique({ where: { slug: "default" } });
+    if (defaultTenant) tenantId = defaultTenant.id;
+  }
+
+  const { data: authData, error } = await supabase.auth.signUp({
+    email: data.email,
+    password: data.password,
+    options: { data: { name: data.name } },
+  });
+
+  if (error) throw new AppError(error.message, 400);
+  if (!authData.user) throw new AppError("Failed to create user", 500);
+
+  const user = await prisma.user.create({
+    data: {
+      tenantId: tenantId || "",
+      authId: authData.user.id,
+      email: data.email,
+      name: data.name,
+      role: data.role as any,
+    },
+  });
+
+  const { data: sessionData, error: sessionError } = await supabase.auth.signInWithPassword({
+    email: data.email,
+    password: data.password,
+  });
+
+  if (sessionError) throw new AppError("Account created but login failed", 500);
+
+  return {
+    user: { id: user.id, email: user.email, name: user.name, role: user.role, tenantId: user.tenantId },
+    accessToken: sessionData.session?.access_token,
+    token: sessionData.session?.access_token,
+  };
+}
+
+export async function login(email: string, password: string) {
+  const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+  if (error) throw new AppError("Invalid email or password", 401);
+
+  const authId = data.user.id;
+  let user = await prisma.user.findUnique({ where: { authId } });
+  if (!user) {
+    user = await prisma.user.findFirst({ where: { email } });
+    if (user) {
+      user = await prisma.user.update({
+        where: { id: user.id },
+        data: { authId, lastLoginAt: new Date() },
+      });
+    }
+  }
+  if (!user) throw new AppError("User not found. Please register first.", 404);
+
+  user = await prisma.user.update({
+    where: { id: user.id },
+    data: { lastLoginAt: new Date() },
+  });
+
+  return {
+    id: user.id,
+    email: user.email,
+    name: user.name,
+    role: user.role,
+    tenantId: user.tenantId,
+    farmerId: null,
+    avatar: null,
+    accessToken: data.session?.access_token,
+    token: data.session?.access_token,
+  };
+}
+
+export async function oauthCallback(data: {
+  email: string;
+  name?: string;
+  avatar?: string;
+  provider: string;
+  providerAccountId: string;
+}) {
+  let user = await prisma.user.findFirst({ where: { email: data.email } });
+  if (user) {
+    user = await prisma.user.update({
+      where: { id: user.id },
+      data: { lastLoginAt: new Date(), name: data.name || user.name },
+    });
+  } else {
+    const defaultTenant = await prisma.tenant.findUnique({ where: { slug: "default" } });
+    user = await prisma.user.create({
+      data: {
+        tenantId: defaultTenant?.id || "",
+        email: data.email,
+        name: data.name || data.email.split("@")[0],
+        role: "FARMER",
+      },
+    });
+  }
+
+  return {
+    id: user.id,
+    email: user.email,
+    name: user.name,
+    role: user.role,
+    tenantId: user.tenantId,
+    farmerId: null,
+    needsSetup: !user.name || !user.tenantId,
+  };
+}
+
+export async function completeOAuthSetup(userId: string, data: {
+  role: string;
+  tenantSlug?: string;
+  phone?: string;
+}) {
+  let tenantId: string | undefined;
+  if (data.tenantSlug) {
+    const tenant = await prisma.tenant.findUnique({ where: { slug: data.tenantSlug } });
+    if (!tenant) throw new AppError("Tenant not found", 404);
+    tenantId = tenant.id;
+  }
+
+  const updateData: any = { role: data.role as any };
+  if (tenantId) updateData.tenantId = tenantId;
+
+  const user = await prisma.user.update({
+    where: { id: userId },
+    data: updateData,
+  });
+
+  if (data.phone) {
+    const farmer = await prisma.farmer.findUnique({ where: { userId: user.id } });
+    if (farmer) {
+      await prisma.farmer.update({ where: { id: farmer.id }, data: { phone: data.phone } });
+    }
+  }
+
+  return {
+    id: user.id,
+    email: user.email,
+    name: user.name,
+    role: user.role,
+    tenantId: user.tenantId,
+  };
+}
+
+export async function forgotPassword(email: string) {
+  const { error } = await supabase.auth.resetPasswordForEmail(email, {
+    redirectTo: `${process.env.FRONTEND_URL || "http://localhost:3000"}/login`,
+  });
+  if (error) throw new AppError(error.message, 400);
+  return { message: "Password reset email sent" };
 }
