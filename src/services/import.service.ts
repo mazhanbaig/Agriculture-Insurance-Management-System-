@@ -254,3 +254,122 @@ export async function importFarmersPolicies(
     farmers: importedFarmers,
   };
 }
+
+// ─── Export (JSON / CSV) ────────────────────────────────────────────
+
+export async function exportFarmers(
+  tenantId: string,
+  format: "json" | "csv"
+): Promise<{ data: string; contentType: string; filename: string }> {
+  const farmers = await prisma.farmer.findMany({
+    where: { tenantId },
+    include: {
+      user: { select: { email: true, phone: true, isActive: true } },
+      landParcels: true,
+      policies: { include: { policyPlan: true, landParcel: true } },
+    },
+  });
+
+  const records = farmers.map((f) => ({
+    fullName: f.fullName,
+    cnicNumber: f.cnicNumber,
+    email: f.user.email,
+    phone: f.user.phone || "",
+    guardianName: f.guardianName || "",
+    address: f.address || "",
+    city: f.city || "",
+    province: f.province || "",
+    bankName: f.bankName || "",
+    bankAccountNumber: f.bankAccountNumber || "",
+    accountTitle: f.accountTitle || "",
+    isActive: f.user.isActive,
+    landParcels: f.landParcels.map((lp) => ({
+      address: lp.address,
+      areaAcres: lp.areaAcres,
+      cropType: lp.cropType,
+      latitude: lp.latitude,
+      longitude: lp.longitude,
+    })),
+    policies: f.policies.map((p) => ({
+      policyNumber: p.policyNumber,
+      planName: p.policyPlan?.name || "",
+      cropType: p.policyPlan?.cropType || "",
+      coverageAmount: p.coverageAmount,
+      premiumAmount: p.premiumAmount,
+      startDate: p.startDate.toISOString(),
+      endDate: p.endDate.toISOString(),
+      status: p.status,
+    })),
+  }));
+
+  if (format === "csv") {
+    const { Parser } = require("json2csv");
+    const flattened: Record<string, any>[] = [];
+    for (const r of records) {
+      const base = {
+        fullName: r.fullName, cnicNumber: r.cnicNumber, email: r.email, phone: r.phone,
+        guardianName: r.guardianName, address: r.address, city: r.city, province: r.province,
+        bankName: r.bankName, bankAccountNumber: r.bankAccountNumber, accountTitle: r.accountTitle,
+        isActive: r.isActive,
+        landCount: r.landParcels.length,
+        landAddress: r.landParcels.map((lp: any) => lp.address).join("; "),
+        landAreaAcres: r.landParcels.map((lp: any) => lp.areaAcres).join("; "),
+        landCropType: r.landParcels.map((lp: any) => lp.cropType).join("; "),
+        policyCount: r.policies.length,
+        policyNumbers: r.policies.map((p: any) => p.policyNumber).join("; "),
+      };
+      flattened.push(base);
+    }
+    const parser = new Parser();
+    const csv = parser.parse(flattened);
+    return { data: csv, contentType: "text/csv", filename: `farmers-export-${Date.now()}.csv` };
+  }
+
+  return { data: JSON.stringify(records, null, 2), contentType: "application/json", filename: `farmers-export-${Date.now()}.json` };
+}
+
+export async function exportClaims(
+  tenantId: string,
+  format: "json" | "csv",
+  status?: string
+): Promise<{ data: string; contentType: string; filename: string }> {
+  const where: Record<string, any> = { tenantId };
+  if (status) where.status = status;
+
+  const claims = await prisma.claim.findMany({
+    where,
+    include: {
+      farmer: { select: { fullName: true, cnicNumber: true } },
+      policy: { include: { policyPlan: true } },
+      documents: true,
+    },
+  });
+
+  const records = claims.map((c) => ({
+    claimNumber: c.claimNumber,
+    status: c.status,
+    incidentType: c.incidentType,
+    incidentDate: c.incidentDate.toISOString(),
+    farmerName: c.farmer?.fullName || "",
+    farmerCnic: c.farmer?.cnicNumber || "",
+    policyNumber: c.policy?.policyNumber || "",
+    planName: c.policy?.policyPlan?.name || "",
+    cropType: c.policy?.policyPlan?.cropType || "",
+    claimedAmount: c.claimedAmount,
+    approvedAmount: c.approvedAmount,
+    fraudScore: c.fraudScore,
+    fraudVerdict: c.fraudVerdict,
+    documentCount: c.documents.length,
+    submittedAt: c.submittedAt.toISOString(),
+    resolvedAt: c.resolvedAt?.toISOString() || "",
+  }));
+
+  if (format === "csv") {
+    const { Parser } = require("json2csv");
+    const parser = new Parser();
+    const csv = parser.parse(records);
+    return { data: csv, contentType: "text/csv", filename: `claims-export-${Date.now()}.csv` };
+  }
+
+  return { data: JSON.stringify(records, null, 2), contentType: "application/json", filename: `claims-export-${Date.now()}.json` };
+}

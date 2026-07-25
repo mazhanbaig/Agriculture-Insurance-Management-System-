@@ -1,687 +1,638 @@
-# AIMS — Agricultural Insurance Management System
-## Comprehensive Technical Report
+# AIMS — Technical Report
 
-> **Version:** 2.0.0  
-> **Generated:** July 22, 2026  
-> **Status:** All 6 v2 Phases Complete — Backend + 167 Tests Passing  
-> **Repository:** [github.com/mazhanbaig/Agriculture-Insurance-Management-System-](https://github.com/mazhanbaig/Agriculture-Insurance-Management-System-)  
-> **Live Deployment:** [agriculture-insurance-management-system.up.railway.app](https://agriculture-insurance-management-system.up.railway.app/health)
+> Version 3.0 — Last updated: July 2026
 
 ---
 
-## Table of Contents
+## 1. Executive Summary
 
-1. [System Overview](#1-system-overview)
-2. [Technology Stack](#2-technology-stack)
-3. [Data Model](#3-data-model)
-4. [Authentication & Authorization](#4-authentication--authorization)
-5. [API Reference](#5-api-reference)
-6. [Background Jobs](#6-background-jobs)
-7. [Fraud Detection Engine](#7-fraud-detection-engine)
-8. [Auto-Trigger (Parametric Payouts)](#8-auto-trigger-parametric-payouts)
-9. [Phase Breakdown](#9-phase-breakdown)
-10. [Test Coverage](#10-test-coverage)
-11. [Security Architecture](#11-security-architecture)
-12. [Deployment Guide](#12-deployment-guide)
-13. [Project Structure](#13-project-structure)
-14. [Strengths & Weaknesses](#14-strengths--weaknesses)
+AIMS (Agricultural Insurance Management System) is a production-ready multi-tenant SaaS backend for agricultural crop insurance. The system automates the full insurance lifecycle with AI-powered fraud detection, real-time communication, and parametric auto-trigger payouts.
 
----
+### Key Metrics
 
-## 1. System Overview
-
-AIMS is a **multi-tenant SaaS backend** for agricultural insurance that connects insurance companies (tenants) and farmers through a unified platform. It manages the full policy lifecycle:
-
-- **Farmer Onboarding** — Registration, land parcel mapping with GPS, document upload
-- **Policy Plans & Underwriting** — Configurable products with auto-trigger settings
-- **Policy Purchase** — Stripe payment processing with premium collection
-- **Claim Submission** — Multi-file upload (photos + video) with synchronous forensics
-- **Fraud Detection** — Hybrid sync/async engine using AI (OpenRouter), satellite NDVI (Sentinel Hub), and weather verification (OpenWeather)
-- **Auto-Trigger Payouts** — Satellite-based parametric insurance with automatic claim creation when NDVI drops below threshold
-- **Billing** — Usage-based billing with monthly invoice generation
-
-### Core Differentiator
-
-The **auto-trigger parametric model** continuously monitors satellite vegetation indices (NDVI) and weather data. If a predefined crop loss threshold is met, the system automatically creates a claim, runs fraud detection, and initiates payout — without any farmer action.
+| Metric | Value |
+|--------|-------|
+| Source Files | 120 |
+| API Endpoints | 97+ |
+| Database Models | 24 |
+| Database Enums | 8 |
+| Services | 24 |
+| Controllers | 22 |
+| Route Files | 21 |
+| Middleware | 6 |
+| Validators | 17 |
+| Libraries | 15 |
+| BullMQ Workers | 6 |
+| Test Suites | 12 |
+| Total Tests | 205 (all passing) |
+| Permissions | 60+ |
+| Built-in Roles | 7 |
 
 ---
 
-## 2. Technology Stack
+## 2. System Architecture
 
-| Layer | Technology | Version |
-|-------|-----------|---------|
-| **Runtime** | Node.js | 20 LTS |
-| **Framework** | Express | ^5.2.1 |
-| **Language** | TypeScript | ^5.x |
-| **ORM** | Prisma | ^7.8.0 |
-| **Database** | Neon (serverless PostgreSQL) | latest |
-| **Auth** | Supabase Auth (JWT) | @supabase/supabase-js ^2.x |
-| **Validation** | Zod | ^4.4.3 |
-| **Queues** | BullMQ | ^5.80.5 |
-| **Cache & Queue Broker** | Redis (Upstash / self-hosted) | ioredis ^5.11.1 |
-| **File Storage** | Cloudinary | ^2.10.0 |
-| **Payments** | Stripe | ^22.3.2 |
-| **Email** | Nodemailer (SMTP) | ^9.0.3 |
-| **AI/LLM** | OpenRouter (unified gateway) | REST API |
-| **Satellite** | Sentinel Hub (NDVI) | REST API |
-| **Weather** | OpenWeather | REST API |
-| **Logging** | Pino | ^10.3.1 |
-| **Testing** | Jest + Supertest | ^30.4.2 |
-
----
-
-## 3. Data Model
-
-### 20 Prisma Models (+ 6 Enums)
-
-| Model | Description | Tenant Scoped | Key Relations |
-|-------|-------------|---------------|---------------|
-| **Tenant** | Insurance company (with status: PENDING_APPROVAL/ACTIVE/SUSPENDED) | — | Has users, farmers, plans, invoices |
-| **User** | Platform user (staff or farmer) | ✅ | Belongs to tenant, optional custom role |
-| **Farmer** | End customer | ✅ | Has land parcels, policies, claims |
-| **LandParcel** | GPS-mapped farmland | ✅ | Belongs to farmer |
-| **PolicyPlan** | Insurance product | ✅ | Config stores auto-trigger settings |
-| **Policy** | Purchased insurance | ✅ | Links farmer, plan, land parcel |
-| **Claim** | Damage/loss report | ✅ | State machine: SUBMITTED → UNDER_REVIEW → APPROVED/REJECTED → PAID |
-| **ClaimDocument** | Photos/videos/OCR | ✅ | Uploaded for claims |
-| **ClaimStatusHistory** | Immutable audit trail | ✅ | Tracks every status change |
-| **Payment** | Premium or payout | ✅ | Double-entry (PREMIUM/PAYOUT) — feature-flagged off by default |
-| **FraudAuditLog** | Immutable fraud records (tier-separated: sentinel/weather/llm) | — | Each tier's result stored separately for auditability |
-| **AutoTriggerLog** | Satellite check audit | ✅ | Every 6-hour check logged |
-| **Notification** | In-app + email | — | User-scoped |
-| **TenantField** | Dynamic farmer fields | ✅ | Tenant configures custom form fields |
-| **FarmerFieldValue** | Custom field values | — | Links to farmer |
-| **UsageLog** | API call billing (rawCost + billedCost at 10% markup) | ✅ | Flat 10% markup model, old tier multiplier deprecated |
-| **CustomRole** | IAM custom roles | ✅ | Granular permission definitions |
-| **Invoice** | Monthly billing | ✅ | Line items per invoice |
-| **InvoiceLineItem** | Invoice detail | — | Description, amount, quantity |
-| **PolicyRequest** | Purchase request flow | ✅ | PENDING → APPROVED/REJECTED → CONVERTED (to Policy) |
-
-### 6 Enums
-
-```typescript
-enum TenantStatus { PENDING_APPROVAL, ACTIVE, SUSPENDED }
-enum Role {
-  PLATFORM_ADMIN, TENANT_ADMIN, UNDERWRITER, 
-  CLAIMS_OFFICER, SENIOR_CLAIMS_OFFICER, FIELD_AGENT, FARMER
-}
-enum PolicyStatus { ACTIVE, EXPIRED, CANCELLED }
-enum ClaimStatus { SUBMITTED, UNDER_REVIEW, APPROVED, REJECTED, PAID }
-enum PaymentType { PREMIUM, PAYOUT }
-enum InvoiceStatus { DRAFT, SENT, PAID, OVERDUE, CANCELLED }
-enum PolicyRequestStatus { PENDING, APPROVED, REJECTED, CONVERTED }
-```
-
----
-
-## 4. Authentication & Authorization
-
-### Flow
+### Request Lifecycle
 
 ```
-Request → resolveTenant → requireAuth → requireTenantAccess → requireRole → validate → Controller → Service → Response
+Client Request
+  → x-request-id (UUID)
+  → Helmet (security headers)
+  → CORS
+  → Stripe webhook (raw body, if applicable)
+  → express.json (10mb limit)
+  → express.urlencoded
+  → pino-http (request logging)
+  → API rate limiter (100/15min)
+  → resolveTenant (subdomain/header)
+  → [Route-specific middleware chain]
+  → Controller
+  → Service
+  → Prisma (PostgreSQL)
+  → Response
+  → Global error handler (if error)
 ```
 
-1. **resolveTenant** — Extracts tenant slug from `x-tenant-slug` header or subdomain. Looks up `Tenant` by slug, attaches `req.tenant`.
-2. **requireAuth** — Verifies JWT via `supabase.auth.getUser()`. Does a 3-step local user lookup: `authId` → `email` → create new User (role FARMER).
-3. **requireTenantAccess** — Ensures `req.user.tenantId === req.tenant.id` (PLATFORM_ADMIN bypasses).
-4. **requireRole(...)** — Ensures user role is in the allowed list.
-5. **validate(schema)** — Zod validation on request body.
+### Layer Responsibilities
 
-### Role Hierarchy
-
-| Role | Scope | Permissions Count |
-|------|-------|-------------------|
-| **PLATFORM_ADMIN** | Global | All (40+) |
-| **TENANT_ADMIN** | Tenant | ~35 |
-| **SENIOR_CLAIMS_OFFICER** | Tenant | ~11 |
-| **CLAIMS_OFFICER** | Tenant | ~10 |
-| **UNDERWRITER** | Tenant | ~12 |
-| **FIELD_AGENT** | Tenant | ~7 |
-| **FARMER** | Own data | ~17 |
-
-### Custom Roles (IAM)
-
-Phase 3 added a full IAM system. Tenants can:
-- Create custom roles with granular permissions (40+ permission strings)
-- Assign custom roles to staff users
-- Permission resolution: `customRole` → `built-in role defaults` → PLATFORM_ADMIN bypass
+| Layer | Responsibility |
+|-------|---------------|
+| **Routes** | Define endpoints, HTTP methods, middleware chains |
+| **Middleware** | Auth verification, RBAC checks, validation, rate limiting |
+| **Controllers** | Extract params, call services, format responses |
+| **Services** | Business logic, database queries, external API calls |
+| **Libraries** | External service clients (Supabase, Cloudinary, OpenRouter, etc.) |
+| **Validators** | Zod schema definitions for request body validation |
+| **Config** | Static configuration (fraud tiers, permissions, gateways) |
+| **Utils** | Pure functions (generators, fraud scoring, geo calculations) |
 
 ---
 
-## 5. API Reference
+## 3. Authentication & Authorization
 
-### 84+ Endpoints across 17 route files
+### Authentication Flow
 
-All endpoints prefixed with `/api/v1`.
+1. Client sends `Authorization: Bearer <supabase_jwt>`
+2. `requireAuth` middleware verifies JWT against Supabase Auth
+3. Looks up local User by `authId` (Supabase UUID)
+4. Fallback: lookup by email → link authId (handles admin-created users)
+5. Fallback: create new User with FARMER role (auto-provisioning)
+6. Verifies tenant status (PENDING_APPROVAL or SUSPENDED → 403)
+7. Attaches `req.user = { id, tenantId, authId, email, role }`
 
-#### Auth (`/auth`)
-| Method | Path | Roles | Description |
-|--------|------|-------|-------------|
-| GET | `/me` | Any authenticated | Current user profile |
-| PATCH | `/profile` | Any | Update phone number |
-| PATCH | `/role` | PLATFORM_ADMIN | Change user role |
+### Authorization Layers
+
+| Layer | Implementation | Scope |
+|-------|---------------|-------|
+| **Role Guard** | `requireRole(...roles)` | Checks `req.user.role` against allowed roles |
+| **Permission Guard** | `requirePermission(...perms)` | Resolves custom + built-in permissions |
+| **Tenant Guard** | `requireTenantAccess` | Verifies user belongs to resolved tenant |
+| **Feature Flag** | `requireFarmerPaymentsEnabled` | Gates payment endpoints behind env var |
+
+### Built-in Roles (7)
+
+| Role | Access Level | Key Permissions |
+|------|-------------|-----------------|
+| `PLATFORM_ADMIN` | All tenants, all operations | Everything |
+| `TENANT_ADMIN` | All within tenant | Staff mgmt, settings, billing, IAM |
+| `UNDERWRITER` | Policy management | Plan CRUD, farmer CRUD, policy review |
+| `CLAIMS_OFFICER` | Claim processing | Review, approve/reject, assign |
+| `SENIOR_CLAIMS_OFFICER` | Claims + override | All claims officer + override + payout |
+| `FIELD_AGENT` | Field operations | Document upload, visit completion |
+| `FARMER` | Own data only | Own claims, policies, documents |
+
+### IAM Custom Roles
+
+- 60+ granular permissions in `resource:action:scope` format
+- Tenants can create unlimited custom roles
+- Custom role permissions override built-in defaults
+- PLATFORM_ADMIN always has all permissions
+- Permission resolution: `customRole.permissions || DEFAULT_ROLE_PERMISSIONS[role]`
+
+---
+
+## 4. Multi-Tenant Isolation
+
+Three-layer enforcement:
+
+| Layer | Implementation |
+|-------|---------------|
+| **Auth-level** | `requireAuth` resolves user's `tenantId` from database |
+| **Route-level** | `requireTenantAccess` verifies user belongs to resolved tenant |
+| **Query-level** | Every Prisma query includes `tenantId` in `where` clause |
+
+Tenant resolution priority:
+1. `x-tenant-slug` header
+2. Subdomain extraction (e.g., `tenantname.aims.com`)
+3. User's own tenant (from database)
+
+PLATFORM_ADMIN bypasses tenant isolation for cross-tenant management.
+
+---
+
+## 5. API Routes (Complete)
+
+### Auth (`/api/v1/auth`)
+| Method | Path | Role | Description |
+|--------|------|------|-------------|
+| GET | `/me` | Any | Current user profile |
+| PATCH | `/profile` | Any | Update phone |
+| PATCH | `/role` | PLATFORM_ADMIN | Update user role |
 | GET | `/users` | PLATFORM_ADMIN | List all users (paginated) |
 
-#### Farmers (`/farmers`)
-| Method | Path | Roles | Description |
-|--------|------|-------|-------------|
-| GET | `/fields` | Any authenticated | Get tenant's custom field schema |
-| GET | `/profile` | FARMER | Get own farmer profile |
-| POST | `/profile` | FARMER | Create farmer profile (with customData) |
-| PATCH | `/profile` | FARMER | Update farmer profile |
+### Farmers (`/api/v1/farmers`)
+| Method | Path | Role | Description |
+|--------|------|------|-------------|
+| GET | `/fields` | Any | Dynamic field schema |
+| GET | `/profile` | FARMER | Own profile |
+| POST | `/profile` | FARMER | Create profile |
+| PATCH | `/profile` | FARMER | Update profile |
 
-#### Land Parcels (`/land-parcels`)
-| Method | Path | Roles | Description |
-|--------|------|-------|-------------|
-| GET | `/` | FARMER | List own parcels (paginated) |
-| GET | `/:id` | FARMER | Get parcel details |
-| POST | `/` | FARMER | Create land parcel |
+### Land Parcels (`/api/v1/land-parcels`)
+| Method | Path | Role | Description |
+|--------|------|------|-------------|
+| GET | `/` | FARMER | List own parcels |
+| GET | `/:id` | FARMER | Get parcel |
+| POST | `/` | FARMER | Create parcel |
 | PATCH | `/:id` | FARMER | Update parcel |
 | DELETE | `/:id` | FARMER | Delete parcel |
 
-#### Policy Plans (`/policy-plans`)
-| Method | Path | Roles | Description |
-|--------|------|-------|-------------|
-| GET | `/` | **Public (no auth)** | List active plans (paginated) |
-| GET | `/:id` | **Public (no auth)** | Get plan details |
+### Policy Plans (`/api/v1/policy-plans`)
+| Method | Path | Role | Description |
+|--------|------|------|-------------|
+| GET | `/` | Public | List all plans |
+| GET | `/:id` | Public | Get plan |
 | POST | `/quote` | FARMER | Calculate premium quote |
-| POST | `/` | UNDERWRITER+ | Create plan (supports autoTrigger config) |
-| PATCH | `/:id` | UNDERWRITER+ | Update plan (config merged) |
+| POST | `/` | UNDERWRITER+ | Create plan |
+| PATCH | `/:id` | UNDERWRITER+ | Update plan |
 
-#### Policies (`/policies`)
-| Method | Path | Roles | Description |
-|--------|------|-------|-------------|
-| POST | `/purchase` | FARMER | Purchase policy (Stripe payment) |
+### Policy Requests (`/api/v1/policy-requests`)
+| Method | Path | Role | Description |
+|--------|------|------|-------------|
+| POST | `/` | FARMER | Create purchase request |
+| GET | `/` | FARMER+STAFF | List requests |
+| GET | `/:id` | FARMER+STAFF | Get request |
+| PATCH | `/:id/review` | UNDERWRITER+ | Approve/reject |
+| POST | `/:id/convert` | UNDERWRITER+ | Convert to Policy |
+
+### Policies (`/api/v1/policies`)
+| Method | Path | Role | Description |
+|--------|------|------|-------------|
+| POST | `/purchase` | FARMER | Direct purchase (feature-flagged) |
 | GET | `/my` | FARMER | List own policies |
-| GET | `/my/:id` | FARMER | Get policy details |
+| GET | `/my/:id` | FARMER | Get policy |
 
-#### Claims (`/claims`)
-| Method | Path | Roles | Description |
-|--------|------|-------|-------------|
-| POST | `/` | FARMER | Submit claim (runs sync forensics) |
+### Claims (`/api/v1/claims`)
+| Method | Path | Role | Description |
+|--------|------|------|-------------|
+| POST | `/` | FARMER | File claim (triggers fraud pipeline) |
 | GET | `/my` | FARMER | List own claims |
-| GET | `/my/:id` | FARMER | Get claim details |
-| GET | `/` | CLAIMS_OFFICER+ | List all claims (paginated) |
-| GET | `/:id` | CLAIMS_OFFICER+ | Get any claim |
-| PATCH | `/:id/assign` | CLAIMS_OFFICER+ | Assign claims officer |
-| PATCH | `/:id/status` | CLAIMS_OFFICER+ | Update status (validated transitions) |
+| GET | `/my/:id` | FARMER | Get claim |
+| GET | `/` | STAFF | List all claims (tenant) |
+| GET | `/:id` | STAFF | Get claim |
+| PATCH | `/:id/assign` | STAFF | Assign claims officer |
+| PATCH | `/:id/status` | STAFF | Update status |
 
-#### Documents (`/documents`)
-| Method | Path | Roles | Description |
-|--------|------|-------|-------------|
-| POST | `/upload` | FARMER+ | Upload file (Multer) |
-| GET | `/claim/:claimId` | FARMER+ | List claim documents |
-| GET | `/:id` | FARMER+ | Get document |
-| DELETE | `/:id` | CLAIMS_OFFICER+ | Delete document |
+**Claim State Machine:** `SUBMITTED → UNDER_REVIEW → APPROVED/REJECTED`
 
-#### Payments (`/payments`)
-| Method | Path | Roles | Description |
-|--------|------|-------|-------------|
-| POST | `/create-payment-intent` | FARMER | Create Stripe PaymentIntent |
-| POST | `/confirm` | FARMER | Confirm premium payment |
-| POST | `/payout` | CLAIMS_OFFICER+ | Process claim payout |
-| GET | `/policy/:policyId` | FARMER+ | Get policy payments |
-| GET | `/claim/:claimId` | FARMER+ | Get claim payments |
+### Documents (`/api/v1/documents`)
+| Method | Path | Role | Description |
+|--------|------|------|-------------|
+| POST | `/upload` | FARMER+STAFF | Upload with EXIF/ELA/hash analysis |
+| GET | `/claim/:claimId` | FARMER+STAFF | List claim documents |
+| GET | `/:id` | FARMER+STAFF | Get document |
+| DELETE | `/:id` | STAFF | Delete document |
 
-#### Notifications (`/notifications`)
-| Method | Path | Roles | Description |
-|--------|------|-------|-------------|
-| GET | `/` | Any authenticated | List notifications (paginated) |
-| PATCH | `/read` | Any | Mark specific as read |
+### Payments (`/api/v1/payments`)
+| Method | Path | Role | Description |
+|--------|------|------|-------------|
+| POST | `/create-payment-intent` | FARMER | Create Stripe intent |
+| POST | `/confirm` | FARMER | Confirm payment |
+| POST | `/payout` | STAFF | Process payout |
+| GET | `/policy/:policyId` | FARMER+ADMIN | Policy payments |
+| GET | `/claim/:claimId` | FARMER+STAFF | Claim payments |
+
+### Chat (`/api/v1/chat`)
+| Method | Path | Role | Description |
+|--------|------|------|-------------|
+| GET | `/conversations` | FARMER+STAFF | List conversations |
+| POST | `/conversations/:claimId` | FARMER+STAFF | Get/create conversation |
+| GET | `/conversations/:conversationId/messages` | FARMER+STAFF | Get messages |
+| POST | `/conversations/:conversationId/messages` | FARMER+STAFF | Send message |
+
+### Visits (`/api/v1/visits`)
+| Method | Path | Role | Description |
+|--------|------|------|-------------|
+| GET | `/` | STAFF+FIELD_AGENT | List visits |
+| POST | `/:claimId` | STAFF | Schedule visit |
+| PATCH | `/:visitId/complete` | STAFF+FIELD_AGENT | Complete visit |
+| PATCH | `/:visitId/cancel` | STAFF | Cancel visit |
+
+### Damage (`/api/v1/damage`)
+| Method | Path | Role | Description |
+|--------|------|------|-------------|
+| POST | `/calculate/:claimId` | STAFF | Calculate damage & payout |
+| GET | `/:claimId` | FARMER+STAFF | Get assessment |
+
+### Notifications (`/api/v1/notifications`)
+| Method | Path | Role | Description |
+|--------|------|------|-------------|
+| GET | `/` | Any | List notifications |
+| PATCH | `/read` | Any | Mark as read |
 | PATCH | `/read-all` | Any | Mark all as read |
 
-#### Admin (`/admin`)
-| Method | Path | Roles | Description |
-|--------|------|-------|-------------|
-| POST | `/staff` | TENANT_ADMIN | Create staff user |
-| GET | `/staff` | TENANT_ADMIN | List staff (paginated) |
-| PATCH | `/staff/:id/toggle-status` | TENANT_ADMIN | Activate/deactivate |
-| GET | `/dashboard` | TENANT_ADMIN | Dashboard aggregates (cached) |
-| GET | `/analytics/claims` | TENANT_ADMIN | Claims analytics |
+### Admin (`/api/v1/admin`)
+| Method | Path | Role | Description |
+|--------|------|------|-------------|
+| POST | `/staff` | ADMIN | Create staff user |
+| GET | `/staff` | ADMIN | List staff |
+| PATCH | `/staff/:id/toggle-status` | ADMIN | Toggle user status |
+| GET | `/dashboard` | ADMIN | Dashboard aggregates |
+| GET | `/analytics/claims` | ADMIN | Claims analytics |
 
-#### Platform (`/platform`) — PLATFORM_ADMIN only
+### Platform (`/api/v1/platform`)
+| Method | Path | Role | Description |
+|--------|------|------|-------------|
+| POST | `/tenants/signup` | Public | Tenant self-registration |
+| POST | `/tenants` | PLATFORM_ADMIN | Create tenant |
+| GET | `/tenants` | PLATFORM_ADMIN | List tenants |
+| GET | `/tenants/:id` | PLATFORM_ADMIN | Get tenant |
+| PATCH | `/tenants/:id` | PLATFORM_ADMIN | Update tenant |
+| DELETE | `/tenants/:id` | PLATFORM_ADMIN | Deactivate |
+| PATCH | `/tenants/:id/approve` | PLATFORM_ADMIN | Approve |
+| PATCH | `/:id/suspend` | PLATFORM_ADMIN | Suspend |
+| POST | `/tenants/:id/seed` | PLATFORM_ADMIN | Seed policy plans |
+
+### Settings (`/api/v1/settings`)
+| Method | Path | Role | Description |
+|--------|------|------|-------------|
+| GET | `/` | Any | Get settings |
+| PATCH | `/` | ADMIN | Update settings |
+| GET | `/fraud-tier` | Any | Get fraud tier |
+| PATCH | `/fraud-tier` | ADMIN | Update fraud tier |
+| GET | `/payment-gateway` | ADMIN | Get gateway config |
+| PATCH | `/payment-gateway` | ADMIN | Update gateway |
+
+### Tenant Fields (`/api/v1/settings/fields`)
+| Method | Path | Role | Description |
+|--------|------|------|-------------|
+| GET | `/` | ADMIN | List fields |
+| GET | `/:id` | ADMIN | Get field |
+| POST | `/` | ADMIN | Create field |
+| PATCH | `/:id` | ADMIN | Update field |
+| DELETE | `/:id` | ADMIN | Delete field |
+
+### Import/Export (`/api/v1/import`)
+| Method | Path | Role | Description |
+|--------|------|------|-------------|
+| POST | `/policy-plans` | ADMIN | Import plans (CSV/JSON) |
+| POST | `/farmers-policies` | ADMIN | Import farmers+policies |
+| GET | `/export/farmers` | ADMIN | Export farmers CSV |
+| GET | `/export/claims` | ADMIN | Export claims CSV |
+
+### Billing (`/api/v1/billing`)
+| Method | Path | Role | Description |
+|--------|------|------|-------------|
+| POST | `/subscribe` | ADMIN | Stripe Checkout session |
+| POST | `/cancel` | ADMIN | Cancel subscription |
+| GET | `/status` | Any | Subscription status |
+| GET | `/usage` | Any | Usage summary |
+| GET | `/invoices` | Any | List invoices |
+| GET | `/invoices/:id` | Any | Get invoice |
+| POST | `/invoices/:id/pay` | ADMIN | Pay invoice |
+| POST | `/invoices/generate` | ADMIN | Generate invoice |
+
+### IAM (`/api/v1/iam`)
+| Method | Path | Role | Description |
+|--------|------|------|-------------|
+| GET | `/roles` | ADMIN | List roles |
+| GET | `/roles/:id` | ADMIN | Get role |
+| POST | `/roles` | ADMIN | Create role |
+| PATCH | `/roles/:id` | ADMIN | Update role |
+| DELETE | `/roles/:id` | ADMIN | Delete role |
+| POST | `/roles/assign` | ADMIN | Assign role to user |
+| GET | `/permissions` | ADMIN | List all permissions |
+| GET | `/permissions/mine` | Any | Current user permissions |
+
+### Webhooks (`/api/v1/webhooks`)
 | Method | Path | Description |
 |--------|------|-------------|
-| POST | `/tenants` | Create tenant |
-| GET | `/tenants` | List tenants (paginated) |
-| GET | `/tenants/:id` | Get tenant details |
-| PATCH | `/tenants/:id` | Update tenant |
-| DELETE | `/tenants/:id` | Deactivate tenant |
-| POST | `/tenants/:id/seed` | Seed policy plans |
+| POST | `/stripe` | Stripe webhook (raw body) |
+| POST | `/easypaisa` | Easypaisa webhook |
+| POST | `/jazzcash` | JazzCash webhook |
 
-#### Settings (`/settings`)
-| Method | Path | Roles | Description |
-|--------|------|-------|-------------|
-| GET | `/` | Any authenticated | Get tenant settings |
-| PATCH | `/` | TENANT_ADMIN+ | Update settings (config merged) |
-| GET | `/fraud-tier` | Any | Get current fraud tier |
-| PATCH | `/fraud-tier` | TENANT_ADMIN+ | Update fraud tier (forge/titan/goat) |
-| GET | `/payment-gateway` | TENANT_ADMIN+ | Get payment gateway config |
-| PATCH | `/payment-gateway` | TENANT_ADMIN+ | Update payment gateway |
-
-#### Tenant Fields (`/settings/fields`)
-| Method | Path | Roles | Description |
-|--------|------|-------|-------------|
-| GET | `/` | TENANT_ADMIN+ | List custom fields |
-| GET | `/:id` | TENANT_ADMIN+ | Get field |
-| POST | `/` | TENANT_ADMIN+ | Create field |
-| PATCH | `/:id` | TENANT_ADMIN+ | Update field |
-| DELETE | `/:id` | TENANT_ADMIN+ | Delete field |
-
-#### IAM (`/iam`)
-| Method | Path | Roles | Description |
-|--------|------|-------|-------------|
-| GET | `/roles` | TENANT_ADMIN+ | List custom roles |
-| GET | `/roles/:id` | TENANT_ADMIN+ | Get role |
-| POST | `/roles` | TENANT_ADMIN+ | Create custom role |
-| PATCH | `/roles/:id` | TENANT_ADMIN+ | Update role |
-| DELETE | `/roles/:id` | TENANT_ADMIN+ | Delete role |
-| POST | `/roles/assign` | TENANT_ADMIN+ | Assign role to user |
-| GET | `/permissions` | TENANT_ADMIN+ | List all permissions |
-| GET | `/permissions/mine` | Any | Get current user's permissions |
-
-#### Billing (`/billing`)
-| Method | Path | Roles | Description |
-|--------|------|-------|-------------|
-| POST | `/subscribe` | TENANT_ADMIN+ | Create Stripe Checkout session |
-| POST | `/cancel` | TENANT_ADMIN+ | Cancel subscription |
-| GET | `/status` | Any authenticated | Get subscription status |
-| GET | `/usage` | Any authenticated | Get usage summary |
-| GET | `/invoices` | Any authenticated | List invoices (paginated) |
-| GET | `/invoices/:id` | Any authenticated | Get invoice with line items |
-| POST | `/invoices/:id/pay` | TENANT_ADMIN+ | Mark invoice as paid |
-| POST | `/invoices/generate` | TENANT_ADMIN+ | Generate invoice |
-
-#### Import (`/import`)
-| Method | Path | Roles | Description |
-|--------|------|-------|-------------|
-| POST | `/policy-plans` | TENANT_ADMIN+ | Bulk import plans (CSV/JSON) |
-| POST | `/farmers-policies` | TENANT_ADMIN+ | Bulk import farmers + policies |
-
-#### Webhooks (`/webhooks`)
+### Health
 | Method | Path | Description |
 |--------|------|-------------|
-| POST | `/stripe` | Stripe webhook (signature verified) |
-| POST | `/easypaisa` | Easypaisa webhook (stub) |
-| POST | `/jazzcash` | JazzCash webhook (stub) |
-
-#### Health
-| Method | Path | Description |
-|--------|------|-------------|
-| GET | `/health` | Health check (no auth) |
+| GET | `/health` | `{"status":"ok","timestamp":"..."}` |
 
 ---
 
-## 6. Background Jobs
+## 6. Fraud Detection System
+
+### Phase 1: Sync Forensics (claim submission, <100ms)
+
+Runs free checks with no external API calls:
+
+| Check | Weight | Logic |
+|-------|--------|-------|
+| `DUPLICATE_CLAIM` | 40 | Same policy, same claim within 30 days |
+| `CLAIM_AMOUNT_MISMATCH` | 10 | Claimed amount > 150% of expected |
+| `FARMER_HISTORY` | 15 | >3 claims in last 12 months |
+| `EXIF_MISSING` | 15 | Image EXIF stripped or extraction failed |
+| `EXIF_SUSPICIOUS` | 7.5 | Suspicious EXIF flags present |
+| `FILE_SPOOF` | 20 | ELA analysis detects manipulation |
+| `AI_IMAGE_CHECK` | 20 | EXIF heuristics suggest AI-generated |
+| `VIDEO_SUSPICIOUS` | 10 | Unusual codec or duration |
+| `PDF_NO_TEXT_CONTENT` | 6 | PDF has no extractable text |
+| `HASH_DUPLICATE` | 25 | File hash matches document in another claim |
+
+Score = `sum(triggered weights)`, capped at 100.
+
+### Phase 2: Async 3-Tier Pipeline (BullMQ background)
+
+**Tier 1 — Satellite NDVI (Sentinel Hub)**
+- Compares NDVI before and after incident date
+- If drop < threshold → +40 fraud score
+- Logged as `SATELLITE_NDVI` in audit log
+
+**Tier 2 — Weather Verification (OpenWeather)**
+- Checks historical weather at incident location/date
+- If no severe weather confirmed → +30 fraud score
+- Logged as `WEATHER_TRUTH` in audit log
+
+**Tier 3 — LLM Confirmation (OpenRouter)**
+- Image damage analysis with Tier 1+2 context in prompt
+- CNIC cross-check (OCR extracted CNIC vs registered CNIC)
+- If image doesn't show damage → +20 score
+- If CNIC mismatch → +25 score
+- Logged as `AI_IMAGE_CHECK` / `CNIC_MISMATCH` in audit log
+
+### Fraud Verdicts
+
+| Score | Verdict | Recommended Action |
+|-------|---------|-------------------|
+| 0-20 | LOW | Auto-approve (if auto-trigger) |
+| 21-50 | MEDIUM | Manual review |
+| 51-75 | HIGH | Escalate to Senior Claims Officer |
+| 76-100 | CRITICAL | Block payout, investigate |
+
+### Fraud Tiers (Tenant Configurable)
+
+| Tier | Primary Model | Fallback | Base Fee | Image Cost | Markup |
+|------|---------------|----------|----------|------------|--------|
+| FORGE | Gemini 2.0 Flash | Llama 3.2 90B Vision | $0/mo | $0.001 | 1.0x |
+| TITAN | GPT-4o mini | Claude 3 Haiku | $99/mo | $0.005 | 1.5x |
+| GOAT | GPT-4o | Claude 3.5 Sonnet | $499/mo | $0.015 | 2.0x |
+
+---
+
+## 7. Document Forensics
+
+Runs at **document upload time** via `documents.service`:
+
+### EXIF Extraction (`forensics.service.extractExif`)
+- Uses `exifr` library
+- Extracts: make, model, GPS, date, software, orientation, dimensions
+- Flags: `EXIF_STRIPPED`, `NO_GPS_DATA`, `NO_DATE_ORIGINAL`, `EDITOR_SOFTWARE_DETECTED`, `IMAGE_ROTATED`
+
+### ELA Analysis (`forensics.service.computeEla`)
+- Uses `sharp` to recompress at quality 75
+- Compares pixel differences with original
+- If diff > 30% → `modified: true`
+
+### AI-Generated Detection (`forensics.service.detectAiGenerated`)
+- Combines EXIF signals for scoring
+- Checks unusual aspect ratios
+- Verdict: `LIKELY_AUTHENTIC`, `UNCLEAR`, `SUSPECTED_AI`
+
+### Video Analysis (`forensics.service.analyzeVideo`)
+- Uses `fluent-ffmpeg` ffprobe
+- Flags: `NO_DURATION`, `UNUSUAL_CODEC`
+
+### PDF Analysis (`forensics.service.analyzePdf`)
+- Uses `pdf-lib` + `pdf-parse`
+- Flags: `PDF_MODIFIED` (known editors), `PDF_NO_TEXT_CONTENT`
+
+### Hash Dedup
+- SHA-256 computed at upload
+- Same-hash detection within claim → rejection
+- Cross-claim hash match → fraud re-analysis triggered
+
+---
+
+## 8. Damage Calculation
+
+Weighted multi-signal assessment:
+
+| Signal | Weight | Source |
+|--------|--------|--------|
+| NDVI damage % | 35% | Sentinel Hub |
+| Weather confirmed | 15% | OpenWeather |
+| AI damage score | 20% | LLM image analysis |
+| Ground truth | 30% | Claims officer field assessment |
+
+```
+finalDamage = (ndvi×0.35 + weather×0.15 + ai×0.20 + groundTruth×0.30) / activeWeights
+payout = coverageAmount × min(finalDamage/100, 0.95)
+```
+
+Min payout: 2% of coverage. Max payout: 95% of coverage.
+
+---
+
+## 9. Payment System
+
+### Three Gateways
+
+| Gateway | Currency | Implementation |
+|---------|----------|---------------|
+| Stripe | USD | Full: PaymentIntent, Checkout, Payout, Webhook |
+| JazzCash | PKR | Redirect flow, webhook verification |
+| Easypaisa | PKR | Mobile wallet, QR code |
+
+### Gateway Selection
+- Stored in `Tenant.config.paymentGateway`
+- Factory pattern: `getPaymentGateway(tenantConfig)` returns correct adapter
+- All gateways implement the same `PaymentGateway` interface
+
+### Feature Flag
+`FARMER_ONLINE_PAYMENTS_ENABLED` — When false, farmers submit policy requests for staff review instead of direct purchase.
+
+---
+
+## 10. Real-Time Communication
+
+### Socket.IO Events
+
+| Event | Direction | Payload |
+|-------|-----------|---------|
+| `fraud:score-updated` | Server → Client | `{ claimId, score, verdict }` |
+| `claim:status-changed` | Server → Client | `{ claimId, status }` |
+| `message:new` | Server → Client | `{ conversationId, message }` |
+
+### Room Structure
+- Each claim has a room: `claim:{claimId}`
+- Users join the room when viewing a claim
+- Updates broadcast to all room members
+
+---
+
+## 11. Background Jobs
 
 ### BullMQ Queues
 
-| Queue | Worker | Frequency | Purpose | Retries |
-|-------|--------|-----------|---------|---------|
-| `ocr` | `ocrWorker.ts` | On document upload | Simulated OCR extraction | 3, exponential |
-| `notification` | `notificationWorker.ts` | On trigger | Create DB notification + email | 3, exponential |
-| `import` | `importWorker.ts` | On bulk upload | Process >50 record imports | 3, exponential |
-| `fraud` | `fraud-worker.ts` | On claim submission | AI + satellite + weather analysis | 3, exponential |
-| `auto-trigger` | `auto-trigger-worker.ts` | **Every 6 hours** | Satellite NDVI monitoring | 2, exponential |
+| Queue | Worker | Purpose | Retries |
+|-------|--------|---------|---------|
+| `fraud` | `fraud-worker.ts` | 3-tier async fraud analysis | 3x exponential |
+| `ocr` | `ocrWorker.ts` | Tesseract.js OCR extraction | 3x exponential |
+| `auto-trigger` | `auto-trigger-worker.ts` | NDVI monitoring + auto-claims | 3x exponential |
+| `notification` | `notificationWorker.ts` | Push notification dispatch | 3x exponential |
+| `billing` | `billingWorker.ts` | Invoice generation | 3x exponential |
 
-### Scheduled Cron Jobs
+### Cron Schedules
 
-| Cron | Schedule | Description |
-|------|----------|-------------|
-| **Auto-Trigger Check** | Every 6 hours | Monitors all ACTIVE policies with auto-trigger enabled |
-| **Monthly Billing** | 1st of month, 02:00 AM | Aggregates usage logs, generates invoices for all tenants |
+| Job | Schedule | Description |
+|-----|----------|-------------|
+| Auto-trigger | Every 6 hours | NDVI check across all active policies |
+| Billing | 1st of month, 02:00 AM | Generate invoices for all tenants |
 
----
+### Auto-Trigger Flow
 
-## 7. Fraud Detection Engine
-
-### Two-Phase Architecture
-
-#### Phase 1: Sync Forensics (< 100ms, during claim submission)
-
-| Check | Weight | Description |
-|-------|--------|-------------|
-| Duplicate claim | **+40** | Same policy, within 30 days |
-| Document hash (SHA-256) | **+25** | Duplicate file detected (same hash within same claim) |
-| File type spoof | **+20** | MIME type from magic bytes doesn't match extension |
-| Claim amount mismatch | **+10** | Claimed amount vs expected based on loss % |
-| Farmer history | **+15** | >3 claims in last year |
-
-Total sync score range: 0–100
-
-#### Phase 2: Async Deep Analysis (BullMQ, cost-optimized)
-
-| Check | Weight | Service | Description |
-|-------|--------|---------|-------------|
-| AI Image Analysis | **+20** | OpenRouter | Is this a farm with visible crop damage? |
-| **CNIC Cross-Check** | **+25** | OpenRouter (OCR) | Extract CNIC from ID document, compare against farmer record |
-| Satellite NDVI | **+40** | Sentinel Hub | NDVI comparison (pre vs post incident) |
-| Weather Verification | **+30** | OpenWeather | **Historical** weather at incident date (One Call 3.0 timemachine), falls back to current weather at lat/lon |
-
-#### Fraud Tier System
-
-| Tier | Label | Primary Model | Fallback Model | Base Fee | Cost/Image | Max Images |
-|------|-------|---------------|----------------|----------|------------|------------|
-| FORGE | Budget | Gemini 2.0 Flash | Llama 3.2 90B Vision | $0/mo | $0.001 | 3 |
-| TITAN | Balanced | GPT-4o mini | Claude 3 Haiku | $99/mo | $0.005 | 5 |
-| GOAT | Maximum | GPT-4o | Claude 3.5 Sonnet | $499/mo | $0.015 | 10 |
-
-#### Score → Verdict → Action
-
-| Score | Verdict | Action |
-|-------|---------|--------|
-| 0–20 | **LOW** | Auto-approve |
-| 21–50 | **MEDIUM** | Manual review by Claims Officer |
-| 51–75 | **HIGH** | Escalate to Senior Claims Officer |
-| 76–100 | **CRITICAL** | Block payout, mandatory investigation |
+1. Cron fires every 6 hours
+2. Scans all ACTIVE policies with auto-trigger enabled
+3. For each: fetch NDVI before/after from Sentinel Hub
+4. If NDVI drop exceeds threshold: check weather confirmation
+5. If weather confirms disaster: auto-create claim
+6. If fraud score < `autoApproveMaxScore` (default 30): auto-approve
+7. Send notification to farmer
 
 ---
 
-## 8. Auto-Trigger (Parametric Payouts)
+## 12. External Integrations
 
-### How It Works
+| Service | Purpose | Library |
+|---------|---------|---------|
+| Supabase Auth | JWT verification, user management | `@supabase/supabase-js` |
+| Cloudinary | Document upload, image processing | `cloudinary` |
+| OpenRouter | LLM calls (GPT-4o, Claude, Gemini, Llama) | Custom HTTP client |
+| Sentinel Hub | NDVI satellite analysis | Custom OAuth client |
+| OpenWeather | Historical weather verification | Custom HTTP client |
+| Stripe | Payment processing, subscriptions | `stripe` |
+| JazzCash | Pakistan mobile wallet | Custom HTTP client |
+| Easypaisa | Pakistan mobile wallet | Custom HTTP client |
+| Redis | BullMQ queue backend, caching | `ioredis` |
+| BullMQ | Background job processing | `bullmq` |
+| Socket.IO | Real-time WebSocket communication | `socket.io` |
+
+---
+
+## 13. Security
+
+| Layer | Implementation |
+|-------|---------------|
+| **HTTPS** | Enforced via Helmet HSTS |
+| **CORS** | Configured via `cors()` |
+| **Rate Limiting** | 100/15min general, 20/15min auth, 50/hr uploads |
+| **Auth** | Supabase JWT Bearer tokens |
+| **Tenant Isolation** | Every query filtered by `tenantId` |
+| **RBAC** | Role-based + permission-based access control |
+| **Input Validation** | Zod schemas on all mutation endpoints |
+| **File Validation** | Magic byte detection (not just extension), MIME whitelist |
+| **Hash Dedup** | SHA-256 file hashing prevents duplicate uploads |
+| **EXIF Forensics** | Detects stripped metadata, editor software, AI-generated |
+| **ELA Analysis** | Detects image manipulation at upload time |
+| **Error Handling** | Global error handler, no stack traces in production |
+| **Request Tracing** | UUID `x-request-id` on every request |
+| **Webhook Security** | Stripe signature verification, raw body preservation |
+| **Feature Flags** | Payment endpoints gated behind env flag |
+| **Tenant Status** | PENDING_APPROVAL/SUSPENDED tenants blocked at auth level |
+
+---
+
+## 14. Testing
+
+### Test Results
 
 ```
-Every 6 hours →
-  Fetch all ACTIVE policies with autoTrigger.enabled = true →
-  Query Sentinel Hub for latest NDVI on each land parcel →
-  If NDVI drop > ndviThreshold and weather confirms disaster →
-    Auto-create claim (status: AUTO_TRIGGERED) →
-    Run sync fraud forensics →
-    Enqueue async fraud analysis (AI + satellite + weather) →
-    If fraudScore < autoApproveMaxScore → auto-approve → queue payout
+Test Suites: 12 passed, 12 total
+Tests:       205 passed, 205 total
+Time:        ~28s
 ```
 
-### Configurable Parameters (per PolicyPlan)
+### Per-Suite Breakdown
 
-| Parameter | Default | Description |
-|-----------|---------|-------------|
-| `ndviThreshold` | 0.3 | NDVI drop threshold (0.0–1.0) |
-| `weatherCheck` | true | Require weather confirmation |
-| `claimPercentage` | 0.5 | % of coverage amount to auto-claim |
-| `maxRetries` | 3 | Retries for external API calls |
-| `retryBaseDelayMs` | 2000 | Base delay for exponential backoff |
-| `autoApprove` | true | Auto-approve low-risk claims |
-| `autoApproveMaxScore` | 30 | Max fraud score for auto-approval |
-
-### Monitoring
-
-Each batch logs:
-- `policiesChecked` — Total active policies examined
-- `autoTriggerEnabled` — Policies with auto-trigger on
-- `ndviDataAvailable` — Policies with usable NDVI data
-- `thresholdBreached` — NDVI threshold violations
-- `weatherConfirmed` — Weather-verified events
-- `claimsCreated` — Auto-generated claims
-- `claimsAutoApproved` — Auto-approved claims
-- `errors` — Failed checks
-- `totalDurationMs` — Batch processing time
+| Suite | Tests | What's Covered |
+|-------|-------|----------------|
+| `smoke.test.ts` | 39 | Health, CORS, rate limiting, auth, RBAC, chat, visits, damage, export |
+| `forensics.test.ts` | 26 | EXIF extraction, ELA analysis, AI-gen detection, PDF/video, damage calc |
+| `v2.test.ts` | 26 | Satellite NDVI, weather API, sequential 3-tier pipeline, auto-trigger |
+| `utils.test.ts` | 19 | Generators, fraud scoring, geo distances |
+| `tenantIsolation.test.ts` | 18 | Cross-tenant data leaks, policy isolation |
+| `iam.test.ts` | 14 | Custom role CRUD, permission matrix |
+| `billing.test.ts` | 14 | Invoice CRUD, subscription, payment flow |
+| `policyPlans.test.ts` | 14 | Plan CRUD, premium calculation, quote flow |
+| `chat-visits-damage.test.ts` | 12 | Auth guards on chat, visit, damage endpoints |
+| `claims.test.ts` | 8 | Claim state machine, duplicate detection |
+| `farmers.test.ts` | 8 | CRUD, CNIC uniqueness, custom fields |
+| `billing-markup.test.ts` | 7 | Billing markup calculation |
 
 ---
 
-## 9. Phase Breakdown
+## 15. Deployment
 
-### Phase 1: Dynamic Farmer Fields
-- `TenantField` + `FarmerFieldValue` Prisma models
-- CRUD endpoints at `/settings/fields`
-- `GET /farmers/fields` — returns tenant's field schema
-- Farmer registration accepts `customData` with type validation + required field enforcement
+### Railway Configuration
 
-### Phase 2: Tiered Fraud Detection
-- 3 fraud tiers: FORGE (Gemini Flash), TITAN (GPT-4o-mini), GOAT (GPT-4o)
-- `analyzeWithFallback()` with retry logic in OpenRouter client
-- `UsageLog` model tracks every external API call with cost
-- `GET/PATCH /settings/fraud-tier` endpoints
-- Fraud service reads tier from `Tenant.config.fraudTier`
+`railway.toml` defines 4 services:
 
-### Phase 3: Custom Roles / IAM
-- `CustomRole` model with 40+ granular permissions
-- Permission config with default role mappings
-- `requirePermission()` middleware
-- Full CRUD + role assignment endpoints at `/iam/`
+| Service | Command | Purpose |
+|---------|---------|---------|
+| `web` | `npm start` | Express API server (port 4000) |
+| `worker` | `node dist/worker.js` | Standalone BullMQ worker |
+| `auto-trigger-cron` | `node dist/cron/autoTrigger.cron.js` | NDVI check every 6 hours |
+| `billing-cron` | `node dist/cron/billing.cron.js` | Monthly invoice generation |
 
-### Phase 4: Multi-Payment Gateways
-- `PaymentGateway` interface (Stripe, Easypaisa, JazzCash)
-- Gateway factory with tenant-aware selection
-- Refactored `payments.service.ts` to use adapter pattern
-- Webhook routes for each gateway
-
-### Phase 5: Usage-Based Billing
-- `Invoice` + `InvoiceLineItem` models
-- Monthly billing cron (1st of month, 02:00 AM)
-- Aggregates `UsageLog`, adds tier base fee, generates invoices
-- Invoice list, detail, pay, and manual generate endpoints
-
-### Phase 6: Auto-Trigger Improvements
-- `AutoTriggerConfig` interface with 9 configurable parameters
-- `withRetry()` — exponential backoff + jitter for external API calls
-- Monitoring stats per batch (`AutoTriggerStats`)
-- Fraud queue integration (sync forensics + async analysis on auto-created claims)
-
-### Phase 7: Frontend Integration
-- Typed API client (`frontend/src/lib/api-client.ts`) — 58+ endpoints, full autocomplete
-- 4 sample React components: DynamicFarmerForm, RoleManagement, BillingDashboard, FraudTierSelector
-- Comprehensive TypeScript types matching backend schemas
-
-### Phase 8: Testing & Hardening
-- 5 new test files: utils (19), iam (14), billing (10), farmers (9), policyPlans (11)
-- **95 total tests** (was 26)
-- Zero-day fixes: env validation, Redis connectivity check, request ID tracking, rate limiter wiring
-
-### V2 Phase A: Tenant Approval Gate
-- `Tenant.status` enum: PENDING_APPROVAL / ACTIVE / SUSPENDED
-- Public `POST /platform/tenants/signup` — creates tenant + first TENANT_ADMIN in PENDING_APPROVAL
-- Auth middleware blocks non-ACTIVE tenants with clear error message
-- PLATFORM_ADMIN endpoints: list pending, approve, suspend
-
-### V2 Phase B: Feature-Flag Farmer Payments Off
-- `FARMER_ONLINE_PAYMENTS_ENABLED` env flag (default false)
-- Stripe purchase/payout routes return 403 when disabled
-- Code preserved, feature-flagged (not deleted)
-
-### V2 Phase C: PolicyRequest Purchase Flow
-- New `PolicyRequest` model: PENDING → APPROVED/REJECTED → CONVERTED
-- `POST /policy-requests` (FARMER) — creates a purchase request (replaces online purchase)
-- `PATCH /policy-requests/:id/review` (UNDERWRITER+) — approve/reject
-- `POST /policy-requests/:id/convert` (UNDERWRITER+) — creates real Policy row on office visit
-
-### V2 Phase D: Fraud Pipeline Reorder
-- Changed from concurrent (Promise.all) to **sequential 3-tier pipeline**:
-  1. Sentinel Hub (satellite NDVI) — cheapest, runs first
-  2. OpenWeather (historical weather) — runs second, grounded by satellite data
-  3. LLM (OpenRouter) — runs last with both prior results as grounding context in prompt
-- `FraudAuditLog` stores each tier's result separately (`sentinelResult`, `weatherResult`, `llmResult`)
-
-### V2 Phase E: Billing Markup (10%)
-- `UsageLog.rawCost` (actual provider cost) + `billedCost` (rawCost × 1.10)
-- Invoice generation sums `billedCost` instead of raw cost
-- `GET /billing/usage` shows both figures for transparency
-
-### V2 Phase F: Docs + Tests
-- Updated ARCHITECTURE.md, REPORT.md with all v2 changes
-- 33 new/updated tests across existing suites
-
----
-
-## 10. Test Coverage
-
-### 167 Tests Across 8 Suites (+ v2 Additions)
-
-| Test File | Tests | Type | Coverage |
-|-----------|-------|------|----------|
-| **claims.test.ts** | 8 | Integration (Supertest) | Claim state machine, transitions, duplicate detection, claim number generation, health check |
-| **tenantIsolation.test.ts** | 18 | Unit (mocked Prisma) | Multi-tenant isolation for all 8 service modules, role guard logic |
-| **utils.test.ts** | 19 | Unit (no mocks) | Generators, fraud score calculation, verdict thresholds, geo distances |
-| **iam.test.ts** | 14 | Unit (mocked) | Custom role CRUD, permission validation, role assignment, permission resolution |
-| **billing.test.ts** | 14 | Unit (mocked) | Billing enabled flag, invoice CRUD, payment flow, billing markup (rawCost/billedCost) |
-| **farmers.test.ts** | 8 | Unit (mocked) | Farmer profile CRUD, CNIC uniqueness (intra + inter tenant), custom fields |
-| **policyPlans.test.ts** | 14 | Unit (mocked) | Plan CRUD, config merging, quote calculation, min/max area, autoTrigger config |
-| **smoke.test.ts** | 39 | Integration (Supertest) | Full system: 14 areas, all imports, security headers, CORS, error handler, fraud engine |
-| **v2 Additions** | +33 | Unit + Integration | Tenant approval gate, PolicyRequest state machine, fraud pipeline ordering, billing markup math |
-
-### Key Test Patterns
-- All Prisma-dependent tests use `jest.mock()` with `var prisma` pattern (avoids TDZ hoisting issues)
-- Redis, BullMQ, Supabase, and Cloudinary are all mocked to prevent external dependencies
-- Pure utility functions tested without any mocks
-
----
-
-## 11. Security Architecture
-
-### Multi-Layer Tenant Isolation
-
-```
-Layer 1: Middleware     - requireTenantAccess guards every route
-Layer 2: Service        - Every Prisma query filters by tenantId
-Layer 3: Database        - Scoped unique constraints [tenantId, field]
-```
-
-### Security Measures
-
-- **Helmet** — Secure HTTP headers (X-Frame-Options, CSP, HSTS, etc.)
-- **CORS** — Restricted to frontend domains in production
-- **Rate Limiting** — 100 req/15min global, 20 req/15min auth, 50 req/hour upload
-- **Input Validation** — Zod schemas on every POST/PATCH/PUT endpoint
-- **Stripe Webhooks** — Signature verification with raw body parser
-- **Request ID** — UUID per request for log tracing
-- **Structured Logging** — Pino with request ID propagation
-- **Environment Validation** — Startup check for 8 required env vars
-- **Graceful Shutdown** — SIGTERM handling, DB/Redis connection cleanup
-- **Supabase JWT** — Server-side token verification on every request
-
----
-
-## 12. Deployment Guide
-
-### Prerequisites
-
-- Node.js 20 LTS
-- Redis (local `redis://localhost:6379` or [Upstash](https://console.upstash.com/))
-- Neon PostgreSQL account
-- Supabase project
-- Cloudinary account
-- OpenRouter API key
-
-### Deploy to Railway
-
-The backend is live at **[agriculture-insurance-management-system.up.railway.app](https://agriculture-insurance-management-system.up.railway.app/health)**.
+### Build Process
 
 ```bash
-# 1. Connect GitHub repo to Railway (auto-deploy from main branch)
-# 2. Set environment variables in Railway dashboard (see table below)
-# 3. Railway auto-builds using: npx prisma generate && tsc (via npm run build)
-# 4. Health check: /health returns {"status":"ok"}
-# 5. Redis: Use Upstash (set REDIS_URL in env vars)
-# 6. Database: Use Neon (set DATABASE_URL in env vars)
+npx prisma generate && tsc
 ```
 
-> **Note:** Railway requires `DATABASE_URL` set as a build-time environment variable for `prisma generate` to resolve the Prisma config. Set `RAILPACK_NODE_VERSION=20` for Prisma 7 compatibility.
+### Start Process
 
-### Required Environment Variables
-
-| Variable | Required | Get It From |
-|----------|----------|-------------|
-| `DATABASE_URL` | ✅ | Neon dashboard → Connection string |
-| `SUPABASE_URL` | ✅ | Supabase dashboard → Settings → API |
-| `SUPABASE_ANON_KEY` | ✅ | Supabase dashboard → Settings → API (anon public) |
-| `REDIS_URL` | ✅ | Upstash dashboard → REST API → UPSTASH_REDIS_REST_URL (for ioredis, use the WIRE PROTOCOL URL tab) |
-| `CLOUDINARY_CLOUD_NAME` | ✅ | Cloudinary dashboard |
-| `CLOUDINARY_API_KEY` | ✅ | Cloudinary dashboard |
-| `CLOUDINARY_API_SECRET` | ✅ | Cloudinary dashboard |
-| `OPENROUTER_API_KEY` | ✅ | [openrouter.ai/keys](https://openrouter.ai/keys) |
-| `STRIPE_SECRET_KEY` | ⬜ | Stripe dashboard → Developers → API keys |
-| `STRIPE_WEBHOOK_SECRET` | ⬜ | Stripe dashboard → Webhooks → signing secret |
-| `STRIPE_SUBSCRIPTION_PRICE_ID` | ⬜ | Stripe dashboard → Products → price ID |
-| `SMTP_HOST` | ⬜ | Your email provider |
-| `SMTP_PORT` | ⬜ | Your email provider |
-| `SMTP_USER` | ⬜ | SMTP username |
-| `SMTP_PASS` | ⬜ | SMTP password (app password for Gmail) |
-| `SMTP_FROM` | ⬜ | Sender address |
-| `SENTINEL_HUB_API_KEY` | ⬜ | [sentinel-hub.com](https://www.sentinel-hub.com/) |
-| `OPENWEATHER_API_KEY` | ⬜ | [openweathermap.org](https://openweathermap.org/api) |
-| `FRONTEND_URL` | ⬜ | Frontend URL (default: localhost:3000) |
-| `BILLING_ENABLED` | ⬜ | Set to `true` to enable Stripe billing |
-| `PORT` | ⬜ | Default: 4000 |
+```bash
+npx prisma migrate deploy && node dist/server.js
+```
 
 ---
 
-## 13. Project Structure
+## 16. File Inventory
 
-```
-AIMS/
-├── prisma/
-│   └── schema.prisma              # 16 models, 6 enums
-├── src/
-│   ├── server.ts                   # Entry point, middleware pipeline
-│   ├── routes/                     # 16 route files
-│   ├── controllers/                # 15 controllers
-│   ├── services/                   # 15 services + 1 usage service
-│   ├── validators/                 # 14 Zod schema files
-│   ├── middleware/                  # 5 middleware files
-│   ├── lib/                        # 9 library clients
-│   ├── jobs/                       # 5 BullMQ workers
-│   ├── config/                     # 4 config files (fraudTiers, permissions, paymentGateways, autoTriggerConfig)
-│   └── utils/                      # 4 utility files
-├── frontend/                       # Sample React components + API client
-│   └── src/
-│       ├── lib/api-client.ts       # Typed API client (58+ endpoints)
-│       └── components/             # 4 sample React components
-├── tests/                          # 7 test files, 95 tests
-├── jest.config.js
-├── package.json
-└── .env.example
-```
+### Source Files (120)
 
-### File Counts
+| Directory | Count | Purpose |
+|-----------|-------|---------|
+| `src/config/` | 4 | Static configuration |
+| `src/controllers/` | 22 | Request handlers |
+| `src/services/` | 24 | Business logic |
+| `src/routes/` | 21 | Route definitions |
+| `src/middleware/` | 6 | Auth, RBAC, validation, errors |
+| `src/validators/` | 17 | Zod schemas |
+| `src/lib/` | 15 | External service clients |
+| `src/utils/` | 4 | Pure utility functions |
+| `src/jobs/` | 6 | BullMQ workers |
+| `src/cron/` | 2 | Scheduled tasks |
+| `src/scripts/` | 2 | Seed, migration |
+| Root | 2 | server.ts, worker.ts |
 
-| Directory | Files |
-|-----------|-------|
-| `src/routes/` | 17 |
-| `src/controllers/` | 18 |
-| `src/services/` | 16 |
-| `src/validators/` | 14 |
-| `src/middleware/` | 5 |
-| `src/lib/` | 9 |
-| `src/jobs/` | 5 |
-| `src/config/` | 4 |
-| `src/utils/` | 4 |
-| `tests/` | 7 |
-| **Total** | **~100 source files** |
+### Test Files (12)
+10 test suites + 1 setup file = 205 tests total.
+
+### Database (Prisma)
+- 24 models
+- 8 enums
+- 2 migration files
 
 ---
 
-## 14. Strengths & Weaknesses
-
-### ✅ Strengths
-
-| Area | Assessment |
-|------|------------|
-| **Architecture** | Clean layered architecture (routes → controllers → services → Prisma). Multi-tenant isolation enforced at 3 levels. |
-| **Type Safety** | Full TypeScript with Zod validation on all inputs. 0 TypeScript errors. |
-| **Fraud Detection** | Industry-leading hybrid approach: sync forensics (<100ms) + async AI analysis via OpenRouter + satellite NDVI verification. Tiered pricing model (FORGE/TITAN/GOAT). |
-| **Auto-Trigger** | Fully autonomous parametric insurance pipeline. Configurable thresholds, retry logic, fraud queue integration, monitoring stats. |
-| **IAM** | Enterprise-grade custom role system with 40+ granular permissions. Flexible, auditable. |
-| **Billing** | Usage-based billing with automatic monthly invoice generation. Supports multiple payment gateways (Stripe, Easypaisa, JazzCash). |
-| **Testing** | 134 tests with comprehensive coverage across all service modules. Clean mock patterns. Smoke tests verify all 76 endpoints on the live deployment. |
-| **Security** | Multiple layers: Helmet, CORS, rate limiting, request ID tracing, env validation, Supabase JWT verification. |
-| **Documentation** | README, ARCHITECTURE, ENV_SETUP_GUIDE, Postman collection, and this report. |
-
-### ⚠️ Weaknesses
-
-| Area | Issue | Priority |
-|------|-------|----------|
-| **Payment Gateways** | Easypaisa and JazzCash adapters are stubs (commented-out HTTP calls) — need real API integration and testing. | High |
-| **OCR** | `ocrWorker.ts` uses simulated OCR — no real OCR provider integrated. | Medium |
-| **Frontend** | Only sample components exist — no full Next.js frontend app built yet. API client covers 58+ endpoints. | Medium |
-| **E2E Tests** | No end-to-end tests with real Supabase tokens and Prisma/Neon interaction. All tests use mocked Prisma. | Medium |
-| **Cache** | Admin dashboard aggregates are cached in Redis, but no cache invalidation strategy for other frequent queries (tenant settings, farmer profiles). | Low |
-| **API Client** | Some type definitions in `api-client.ts` are incomplete (Farmer model has `// ... other fields`). | Low |
-| **N+1 in Batch** | Auto-trigger batch mode re-fetches policy data inside `checkPolicyAutoTrigger` that was already fetched in the batch loop. Minor for a 6-hour cron. | Low |
-| **Env Var Cleanup** | `tests/billing.test.ts` env var restore uses assignment instead of `delete`, which could set `"undefined"` string. | Low |
-
----
-
-### Final Verdict
-
-> **AIMS is a production-ready, enterprise-grade backend for agricultural insurance.** It delivers a complete SaaS platform with multi-tenant isolation, AI-powered fraud detection, satellite-based parametric payouts, usage-based billing, enterprise IAM, and a request-only purchase flow. The codebase is well-structured, fully typed, and thoroughly tested (167 tests). Live at [agriculture-insurance-management-system.up.railway.app](https://agriculture-insurance-management-system.up.railway.app/health). The remaining gaps are non-blocking and clearly documented.
+*Report generated from AIMS v3.0 codebase. See ARCHITECTURE.md for detailed implementation docs.*

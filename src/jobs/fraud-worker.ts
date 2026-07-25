@@ -1,6 +1,7 @@
 import { Job, Worker } from "bullmq";
 import { redis } from "../lib/redis";
 import { runAsyncFraudAnalysis } from "../services/fraud.service";
+import { healthCheck } from "../lib/sentinel";
 import logger from "../utils/logger";
 
 interface FraudJobData {
@@ -8,19 +9,30 @@ interface FraudJobData {
   tenantId: string;
 }
 
-/**
- * Fraud analysis worker.
- * Processes claims in the background: AI image checks, satellite NDVI, weather verification.
- */
 const fraudWorker = new Worker<FraudJobData>(
   "fraud",
   async (job: Job<FraudJobData>) => {
     const { claimId, tenantId } = job.data;
     logger.info({ jobId: job.id, claimId }, "Processing fraud analysis job");
 
+    const ndviHealth = await healthCheck();
+    if (!ndviHealth.ok) {
+      logger.warn({
+        jobId: job.id,
+        claimId,
+        ndviHealth: ndviHealth.message,
+      }, "Copernicus API unhealthy — fraud will use weather + LLM fallback");
+    }
+
     try {
       await runAsyncFraudAnalysis(claimId, tenantId);
-      logger.info({ jobId: job.id, claimId }, "Fraud analysis completed");
+      logger.info({
+        jobId: job.id,
+        claimId,
+        ndviAvailable: ndviHealth.ok,
+        ndviLatencyMs: ndviHealth.latencyMs,
+        ndviQuotaRemaining: ndviHealth.quotaLimit - ndviHealth.quotaUsed,
+      }, "Fraud analysis completed");
     } catch (error) {
       logger.error({ error, jobId: job.id, claimId }, "Fraud analysis failed");
       throw error;
@@ -47,6 +59,6 @@ fraudWorker.on("failed", (job, error) => {
   );
 });
 
-logger.info("Fraud analysis worker initialized");
+logger.info("Fraud analysis worker initialized (Copernicus CDSE)");
 
 export { fraudWorker };

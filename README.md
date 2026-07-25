@@ -1,26 +1,30 @@
 # AIMS — Agricultural Insurance Management System
 
-> **Multi-tenant SaaS backend** for agricultural insurance.  
-> Express + TypeScript + Prisma 7 + Supabase Auth + BullMQ + OpenRouter  
-> **134 tests passing** · **84+ API endpoints** · **8 phases complete**  
+> **Multi-tenant SaaS backend** for agricultural insurance.
+> Express 5 + TypeScript + Prisma 7 + Supabase Auth + BullMQ + OpenRouter
+> **205 tests passing** · **97+ API endpoints** · **24 database models** · **24 services**
 > **Live:** [agriculture-insurance-management-system.up.railway.app](https://agriculture-insurance-management-system.up.railway.app/health)
 
 ---
 
 ## Overview
 
-AIMS is a digital platform connecting insurance companies (tenants) and farmers through a unified, secure, and scalable system. It manages the entire policy lifecycle — farmer registration, land parcel mapping, policy purchase, claim processing, document management, fraud detection, automated parametric payouts, and usage-based billing.
+AIMS is a digital platform connecting insurance companies (tenants) and farmers through a unified, secure, and scalable system. It manages the entire policy lifecycle — farmer registration, land parcel mapping, policy purchase, claim processing, document management, AI-powered fraud detection, automated parametric payouts, real-time chat, field visits, and usage-based billing.
 
 ### Key Features
 
 - **Multi-Tenant Isolation** — Complete data separation between insurance companies (3-layer enforcement)
-- **Fraud Detection Engine** — Sync forensics (<100ms) + async AI analysis via OpenRouter with 3-tier pricing (FORGE/TITAN/GOAT)
-- **Auto-Trigger Payouts** — Satellite vegetation monitoring (Sentinel Hub NDVI) automatically creates claims when crop loss is detected
-- **Custom Roles (IAM)** — 40+ granular permissions, custom role creation, staff assignment
+- **3-Tier Fraud Pipeline** — Satellite NDVI → Weather verification → LLM confirmation, each tier grounding the next
+- **Upload-Time Forensics** — EXIF extraction, ELA analysis, AI-gen detection, hash dedup at document upload
+- **Auto-Trigger Payouts** — Satellite vegetation monitoring automatically creates claims when crop loss is detected
+- **Custom Roles (IAM)** — 60+ granular permissions, custom role creation, staff assignment
 - **Dynamic Farmer Fields** — Tenants define custom registration fields per crop type
-- **Multi-Payment Gateways** — Stripe (live) + Easypaisa/JazzCash (stubs) via adapter pattern
+- **Multi-Payment Gateways** — Stripe + Easypaisa + JazzCash via adapter pattern
+- **Real-Time Chat** — Socket.IO-powered claim discussions with notifications
+- **Field Visit Scheduling** — Schedule, complete, and cancel field visits for claims
+- **Damage Calculation** — Multi-signal weighted assessment (NDVI + Weather + AI + Ground Truth)
 - **Usage-Based Billing** — Monthly invoice generation with tier base fees + per-call costs
-- **Bulk Import** — CSV/JSON import for policy plans, farmers, and policies
+- **Bulk Import/Export** — CSV/JSON import for policy plans, farmers, and policies; CSV export
 
 ---
 
@@ -28,25 +32,32 @@ AIMS is a digital platform connecting insurance companies (tenants) and farmers 
 
 | Layer | Technology |
 |-------|-----------|
-| **Runtime** | Node.js 20 LTS |
-| **Framework** | Express 5 + TypeScript 5 |
-| **Database** | Neon (serverless PostgreSQL) + Prisma 7 |
-| **Auth** | Supabase Auth (JWT) |
-| **Queues** | BullMQ + Redis (Upstash) |
+| **Runtime** | Node.js 22 + TypeScript |
+| **Framework** | Express 5 |
+| **Database** | PostgreSQL (Neon) + Prisma 7 |
+| **Cache/Queue** | Redis (ioredis) + BullMQ |
+| **Auth** | Supabase Auth (JWT Bearer) |
 | **Storage** | Cloudinary |
-| **AI/LLM** | OpenRouter (unified gateway — Gemini, GPT-4o, Claude) |
-| **Email** | Nodemailer (SMTP) |
-| **Payments** | Stripe, Easypaisa, JazzCash (adapter pattern) |
-| **Satellite** | Sentinel Hub (NDVI) |
-| **Weather** | OpenWeather |
-| **Testing** | Jest + Supertest (134 tests) |
+| **AI/LLM** | OpenRouter (GPT-4o, Claude, Gemini, Llama) |
+| **Satellite** | Sentinel Hub (NDVI analysis) |
+| **Weather** | OpenWeatherMap |
+| **Real-Time** | Socket.IO |
+| **Payments** | Stripe + JazzCash + Easypaisa |
+| **Validation** | Zod 4 |
+| **Logging** | Pino + pino-http |
+| **Security** | Helmet + CORS + express-rate-limit |
+| **OCR** | Tesseract.js (BullMQ worker) |
+| **Image Processing** | Sharp (ELA analysis) |
+| **PDF** | pdf-lib + pdf-parse |
+| **EXIF** | exifr |
+| **Testing** | Jest 30 + ts-jest |
 
 ---
 
 ## Live Deployment
 
-The backend is live at:  
-**https://agriculture-insurance-management-system.up.railway.app**  
+The backend is live at:
+**https://agriculture-insurance-management-system.up.railway.app**
 Health check: `GET /health` → `{"status":"ok"}`
 
 ---
@@ -55,7 +66,7 @@ Health check: `GET /health` → `{"status":"ok"}`
 
 ### Prerequisites
 
-- Node.js 20 LTS
+- Node.js 22+
 - Redis ([Upstash](https://console.upstash.com/) or `redis://localhost:6379`)
 - PostgreSQL via [Neon](https://neon.tech/)
 - A Supabase project ([console.supabase.com](https://console.supabase.com/))
@@ -71,18 +82,18 @@ cd AIMS
 # 2. Install dependencies
 npm install
 
-# 3. Create .env file (see .env.example or the Environment Variables section)
-nano .env
+# 3. Create .env file
+cp .env.example .env
+# Edit .env with your credentials
 
-# 4. Generate Prisma client + sync schema
+# 4. Generate Prisma client
 npx prisma generate
-npx prisma db push
 
-# 5. Seed the database
-npm run seed
+# 5. Run migrations
+npx prisma migrate deploy
 
-# 6. Start Redis (if local) or ensure Upstash URL is in .env
-redis-server
+# 6. Seed the database
+npx ts-node src/scripts/seed.ts
 
 # 7. Start the server
 npm run dev
@@ -94,206 +105,247 @@ Server runs at `http://localhost:4000`.
 
 ## Environment Variables
 
-| Variable | Required | Get It From |
-|----------|----------|-------------|
-| `DATABASE_URL` | ✅ | Neon dashboard → Connection string |
-| `SUPABASE_URL` | ✅ | Supabase dashboard → Settings → API |
-| `SUPABASE_ANON_KEY` | ✅ | Supabase dashboard → Settings → API (anon public) |
-| `REDIS_URL` | ✅ | Upstash dashboard → Redis → REST API (use **Upstash Redis Wire Protocol URL** for ioredis) |
-| `CLOUDINARY_CLOUD_NAME` | ✅ | Cloudinary dashboard |
-| `CLOUDINARY_API_KEY` | ✅ | Cloudinary dashboard |
-| `CLOUDINARY_API_SECRET` | ✅ | Cloudinary dashboard |
-| `OPENROUTER_API_KEY` | ✅ | [openrouter.ai/keys](https://openrouter.ai/keys) |
-| `STRIPE_SECRET_KEY` | ⬜ | Stripe dashboard → Developers → API keys (sk_test_...) |
-| `STRIPE_WEBHOOK_SECRET` | ⬜ | Stripe dashboard → Webhooks → signing secret |
-| `STRIPE_SUBSCRIPTION_PRICE_ID` | ⬜ | Stripe dashboard → Products → price ID |
-| `SMTP_HOST` | ⬜ | Your email provider (e.g. `smtp.gmail.com`) |
-| `SMTP_PORT` | ⬜ | 587 (TLS) or 465 (SSL) |
-| `SMTP_USER` | ⬜ | SMTP username (full email address) |
-| `SMTP_PASS` | ⬜ | SMTP password (Gmail app password) |
-| `SMTP_FROM` | ⬜ | Sender address (e.g. `"AIMS" <noreply@aims.app>`) |
-| `SENTINEL_HUB_API_KEY` | ⬜ | [sentinel-hub.com](https://www.sentinel-hub.com/) |
-| `OPENWEATHER_API_KEY` | ⬜ | [openweathermap.org](https://openweathermap.org/api) |
-| `FRONTEND_URL` | ⬜ | Frontend URL for CORS (default: http://localhost:3000) |
-| `BILLING_ENABLED` | ⬜ | Set to `true` to enable Stripe billing |
-| `PORT` | ⬜ | Server port (default: 4000) |
+### Required (server exits if missing)
 
-> **Note:** The server validates 8 required env vars on startup and exits with a clear error if any are missing.
+| Variable | Get It From |
+|----------|-------------|
+| `DATABASE_URL` | Neon dashboard → Connection string |
+| `SUPABASE_URL` | Supabase dashboard → Settings → API |
+| `SUPABASE_ANON_KEY` | Supabase dashboard → Settings → API (anon public) |
+| `REDIS_URL` | Upstash dashboard → Redis → REST API |
+| `CLOUDINARY_CLOUD_NAME` | Cloudinary dashboard |
+| `CLOUDINARY_API_KEY` | Cloudinary dashboard |
+| `CLOUDINARY_API_SECRET` | Cloudinary dashboard |
+| `OPENROUTER_API_KEY` | [openrouter.ai/keys](https://openrouter.ai/keys) |
+
+### Optional
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `PORT` | 4000 | Server port |
+| `NODE_ENV` | development | test/development/production |
+| `USE_NEON_ADAPTER` | false | Enable Neon HTTP adapter for serverless |
+| `FARMER_ONLINE_PAYMENTS_ENABLED` | false | Enable farmer payment endpoints |
+| `LOG_LEVEL` | info | Pino log level |
+| `SENTINEL_HUB_CLIENT_ID` | — | Sentinel Hub for NDVI satellite analysis |
+| `SENTINEL_HUB_CLIENT_SECRET` | — | Sentinel Hub for NDVI satellite analysis |
+| `OPENWEATHER_API_KEY` | — | Weather verification for fraud detection |
+| `STRIPE_SECRET_KEY` | — | Stripe payment processing |
+| `STRIPE_WEBHOOK_SECRET` | — | Stripe webhook verification |
+| `STRIPE_SUBSCRIPTION_PRICE_ID` | — | Stripe subscription billing |
 
 ---
 
-## API Overview (84+ Endpoints)
+## API Overview (97+ Endpoints)
 
 All endpoints are prefixed with `/api/v1`.
 
 | Domain | Endpoints | Primary Role |
 |--------|-----------|-------------|
-| **Auth** | GET /me, PATCH /profile, PATCH /role, GET /users | All authenticated |
-| **Farmers** | GET/POST/PATCH profile, GET /fields | FARMER |
-| **Land Parcels** | CRUD (5 endpoints) | FARMER |
-| **Policy Plans** | List, Get, Quote, Create, Update (5) | **Public** (GET), UNDERWRITER+ (POST/PATCH) |
+| **Auth** | GET /me, PATCH /profile, PATCH /role, GET /users (4) | All authenticated |
+| **Farmers** | GET /fields, GET/POST/PATCH profile (4) | FARMER |
+| **Land Parcels** | CRUD (5) | FARMER |
+| **Policy Plans** | List, Get, Quote, Create, Update (5) | Public (GET), UNDERWRITER+ (POST/PATCH) |
+| **Policy Requests** | Create, List, Get, Review, Convert (5) | FARMER+STAFF |
 | **Policies** | Purchase, List My, Get My (3) | FARMER |
 | **Claims** | Submit, List My, List All, Get, Assign, Status (7) | Mixed |
-| **Documents** | Upload, List, Get, Delete (4) | FARMER+ |
-| **Payments** | Premium intent, Confirm, Payout, Policy/Claim (5) | Mixed |
+| **Documents** | Upload, List, Get, Delete (4) | FARMER+STAFF |
+| **Payments** | Intent, Confirm, Payout, Policy/Claim payments (5) | Mixed |
+| **Chat** | Conversations, Messages (4) | FARMER+STAFF |
+| **Visits** | List, Schedule, Complete, Cancel (4) | STAFF+FIELD_AGENT |
+| **Damage** | Calculate, Get Assessment (2) | STAFF+FARMER |
 | **Notifications** | List, Mark Read, Mark All Read (3) | All authenticated |
-| **Admin** | Dashboard, Staff CRUD, Analytics (5) | TENANT_ADMIN |
-| **Platform** | Tenant CRUD + Seed (6) | PLATFORM_ADMIN |
+| **Admin** | Staff CRUD, Dashboard, Analytics (5) | TENANT_ADMIN |
+| **Platform** | Tenant CRUD, Approve, Suspend, Seed (8) | PLATFORM_ADMIN |
 | **Settings** | Config, Fraud Tier, Payment Gateway (6) | TENANT_ADMIN+ |
 | **Tenant Fields** | CRUD for custom farmer fields (5) | TENANT_ADMIN+ |
-| **IAM** | Roles CRUD + Assignment + Permissions (8) | TENANT_ADMIN+ |
+| **IAM** | Roles CRUD, Assign, Permissions (8) | TENANT_ADMIN+ |
 | **Billing** | Subscribe, Cancel, Status, Usage, Invoices (8) | TENANT_ADMIN+ |
-| **Import** | Policy Plans, Farmers & Policies (2) | TENANT_ADMIN |
+| **Import/Export** | Policy Plans, Farmers, Export CSV (4) | TENANT_ADMIN |
 | **Webhooks** | Stripe, Easypaisa, JazzCash (3) | Public (signed) |
 | **Health** | GET /health (1) | None |
 
-Full API documentation available in `AIMS.postman_collection.json` and `REPORT.md`.
+Full API documentation: `postman/AIMS.postman_collection.json` and `ARCHITECTURE.md`.
 
 ---
 
-## Project Structure (100+ Source Files)
+## Project Structure
 
 ```
 AIMS/
-├── prisma/schema.prisma          # 19 models, 5 enums
 ├── src/
-│   ├── server.ts                 # Entry point, middleware pipeline, env validation
-│   ├── routes/                   # 17 route files (one per domain)
-│   ├── controllers/              # 18 controllers (thin: parse → call service → respond)
-│   ├── services/                 # 18 services (business logic, Prisma queries)
-│   ├── validators/               # 14 Zod schema files
-│   ├── middleware/               # 5 middleware files (auth, roleGuard, errorHandler, validate, rateLimiter)
-│   ├── lib/                      # 9 library clients
-│   ├── jobs/                     # 5 BullMQ workers
-│   ├── config/                   # 4 config files (fraudTiers, permissions, paymentGateways, autoTriggerConfig)
-│   └── utils/                    # 4 utility files (logger, generators, geo, fraud-helpers)
-├── frontend/                     # Sample React components + API client
-├── tests/                        # 8 test files, 134 tests
-└── package.json
+│   ├── server.ts                  # Express app, middleware, route mounting, startup
+│   ├── worker.ts                  # Standalone BullMQ worker entry point
+│   ├── config/                    # 4 config files (fraud tiers, permissions, gateways, auto-trigger)
+│   ├── controllers/               # 22 controllers — thin request→service delegates
+│   ├── services/                  # 24 services — all business logic
+│   ├── routes/                    # 21 route files — Express Router definitions
+│   ├── middleware/                 # 6 middleware — auth, RBAC, validation, rate limiting, errors
+│   ├── validators/                # 17 Zod schemas — request body validation
+│   ├── lib/                       # 15 libraries — external service clients
+│   ├── utils/                     # 4 utilities — generators, fraud scoring, geo, logger
+│   ├── jobs/                      # 6 BullMQ workers — fraud, OCR, auto-trigger, billing, notifications
+│   ├── cron/                      # 2 cron files — auto-trigger (6h), billing (monthly)
+│   └── scripts/                   # 2 scripts — seed, tenant migration
+├── tests/                         # 12 test files — 205 tests
+├── prisma/
+│   ├── schema.prisma              # 24 models, 8 enums
+│   └── migrations/                # 2 migration files
+├── testsprite/                    # MCP server for TestSprite agent
+├── postman/                       # Postman collection (69KB)
+├── api/index.ts                   # Vercel serverless entry point
+├── package.json
+├── tsconfig.json
+├── jest.config.js
+├── prisma.config.ts
+├── railway.toml                   # 4 Railway services
+├── ARCHITECTURE.md                # Complete system architecture
+└── README.md                      # This file
 ```
 
 ---
 
-## Background Jobs (BullMQ)
+## Database Schema (24 Models)
 
-| Queue | Worker | Frequency | Purpose | Retries |
-|-------|--------|-----------|---------|---------|
-| `ocr` | `ocrWorker.ts` | On document upload | Simulated OCR extraction | 3x exponential |
-| `notification` | `notificationWorker.ts` | On trigger | Create DB notification + send email | 3x exponential |
-| `import` | `importWorker.ts` | On bulk upload | Process CSV/JSON imports (>50 records) | 3x exponential |
-| `fraud` | `fraud-worker.ts` | On claim submission | AI image analysis, satellite NDVI, weather check | 3x exponential |
-| `auto-trigger` | `auto-trigger-worker.ts` | Every 6 hours | Monitor satellite NDVI for all active policies | 2x exponential |
-
-### Scheduled Cron Jobs
-
-| Job | Schedule | Description |
-|-----|----------|-------------|
-| **Auto-Trigger Check** | Every 6 hours | Monitors ACTIVE policies with auto-trigger enabled |
-| **Monthly Billing** | 1st of month, 02:00 AM | Aggregates usage logs, generates invoices |
+| Model | Purpose |
+|-------|---------|
+| `Tenant` | Multi-tenant root. Config for fraud tier, payment gateway |
+| `User` | Auth users linked to Tenant via tenantId |
+| `Farmer` | Farmer profile with CNIC, bank details, custom fields |
+| `LandParcel` | Farm land with GPS, crop type, soil, area |
+| `PolicyPlan` | Insurance plan template with auto-trigger config |
+| `PolicyRequest` | Farmer's purchase request (pending staff review) |
+| `Policy` | Active insurance policy linking farmer, plan, land |
+| `Claim` | Insurance claim with fraud score, verdict, status |
+| `ClaimDocument` | Uploaded evidence with URL, hash, EXIF data, OCR text |
+| `ClaimStatusHistory` | Audit trail for claim status changes |
+| `Payment` | Payment records with gateway, amount, status |
+| `FraudAuditLog` | Complete fraud analysis results per claim |
+| `AutoTriggerLog` | NDVI check results for auto-trigger monitoring |
+| `TenantField` | Dynamic field definitions (text/dropdown/file/etc.) |
+| `FarmerFieldValue` | Dynamic field values per farmer |
+| `UsageLog` | API usage tracking per tenant |
+| `CustomRole` | Tenant-created roles with custom permissions |
+| `Invoice` | Monthly billing invoices |
+| `InvoiceLineItem` | Invoice line items (usage-based) |
+| `Notification` | User notifications |
+| `Conversation` | Chat conversations per claim |
+| `Message` | Chat messages |
+| `Visit` | Field visit scheduling and tracking |
+| `DamageAssessment` | Multi-signal damage calculation results |
 
 ---
 
 ## Fraud Detection Architecture
 
-### Two-Phase Architecture
-
-**Phase 1 — Sync Forensics (< 100ms, during claim submission)**
+### Layer 1: Sync Forensics (<100ms, during claim submission)
 
 | Check | Weight | Description |
 |-------|--------|-------------|
 | Duplicate claim | +40 | Same policy, within 30 days |
 | Claim amount mismatch | +10 | Claimed vs expected based on loss % |
 | Farmer history | +15 | >3 claims in last year |
+| EXIF missing | +15 | Image has no EXIF or stripped |
+| EXIF suspicious | +7.5 | Suspicious EXIF flags |
+| File spoof (ELA) | +20 | ELA detects image manipulation |
+| AI-generated image | +20 | EXIF heuristics suggest AI |
+| Video suspicious | +10 | Unusual codec/duration |
+| PDF no text | +6 | PDF has no extractable text |
+| Hash duplicate | +25 | File hash matches another claim |
 
-**Phase 2 — Async Deep Analysis (BullMQ worker, cost-optimized)**
+### Layer 2: Async 3-Tier Pipeline (BullMQ background)
 
-| Check | Weight | Service |
-|-------|--------|---------|
-| AI Image Analysis | +20 | OpenRouter (tier-based model selection) |
-| Satellite NDVI | +40 | Sentinel Hub (pre vs post incident) |
-| Weather Verification | +30 | OpenWeather |
+| Tier | Service | What It Checks |
+|------|---------|----------------|
+| 1 | Sentinel Hub | NDVI pre/post comparison — vegetation loss |
+| 2 | OpenWeather | Historical weather — severe event confirmation |
+| 3 | OpenRouter LLM | Image damage analysis + CNIC cross-check |
+
+Each tier **awaits the previous** and injects results as grounding context for the next.
 
 ### Fraud Tiers
 
-| Tier | Primary Model | Fallback | Base Fee | Cost/Image |
-|------|---------------|----------|----------|------------|
-| **FORGE** | Gemini 2.0 Flash | Llama 3.2 90B Vision | $0/mo | $0.001 |
-| **TITAN** | GPT-4o mini | Claude 3 Haiku | $99/mo | $0.005 |
-| **GOAT** | GPT-4o | Claude 3.5 Sonnet | $499/mo | $0.015 |
+| Tier | Models | Base Fee | Markup |
+|------|--------|----------|--------|
+| **FORGE** | Gemini Flash, Llama 3.2 | $0/mo | 1.0x |
+| **TITAN** | GPT-4o mini, Claude Haiku | $99/mo | 1.5x |
+| **GOAT** | GPT-4o, Claude 3.5 Sonnet | $499/mo | 2.0x |
 
-### Scoring
+---
 
-| Score | Verdict | Action |
-|-------|---------|--------|
-| 0–20 | LOW | Auto-approve |
-| 21–50 | MEDIUM | Manual review |
-| 51–75 | HIGH | Escalate to Senior Claims Officer |
-| 76–100 | CRITICAL | Block payout |
+## Background Jobs
+
+| Queue | Worker | Purpose |
+|-------|--------|---------|
+| `fraud` | `fraud-worker.ts` | Async 3-tier fraud analysis |
+| `ocr` | `ocrWorker.ts` | Tesseract.js OCR text extraction |
+| `auto-trigger` | `auto-trigger-worker.ts` | NDVI monitoring + auto-claims |
+| `notification` | `notificationWorker.ts` | Push notification dispatch |
+| `billing` | `billingWorker.ts` | Invoice generation + monthly cron |
+
+### Cron Schedules
+
+| Job | Schedule | Description |
+|-----|----------|-------------|
+| Auto-trigger | Every 6 hours | NDVI check across all active policies |
+| Billing | 1st of month, 02:00 AM | Generate invoices for all tenants |
 
 ---
 
 ## Running Tests
 
 ```bash
-npm test                    # Full suite (134 tests, 8 files)
+npm test                    # Full suite (205 tests, 12 files)
 npm run test:watch          # Watch mode
 ```
 
-### Test Coverage
+### Test Suites
 
-| Suite | Tests | Type | What's Covered |
-|-------|-------|------|----------------|
-| `claims.test.ts` | 8 | Integration | State machine, duplicate detection, claim numbers |
-| `tenantIsolation.test.ts` | 18 | Unit (mocked) | Tenant isolation across all 8 service modules |
-| `utils.test.ts` | 19 | Unit | Generators, fraud scoring, geo distances |
-| `iam.test.ts` | 14 | Unit (mocked) | Custom role CRUD, permission resolution |
-| `billing.test.ts` | 14 | Unit (mocked) | Invoice CRUD, payment flow, subscription |
-| `farmers.test.ts` | 8 | Unit (mocked) | Farmer CRUD, CNIC uniqueness, custom fields |
-| `policyPlans.test.ts` | 14 | Unit (mocked) | Plan CRUD, quote calc, config merging |
-| `smoke.test.ts` | 39 | Integration | Full system: 14 areas, all imports, security headers |
-| **Total** | **134** | | |
-
----
-
-## Completed Phases
-
-| Phase | Feature | Key Deliverables |
-|-------|---------|-----------------|
-| 1 | Dynamic Farmer Fields | TenantField model, CRUD endpoints, customData on farmer registration |
-| 2 | Tiered Fraud Detection | 3 tiers (FORGE/TITAN/GOAT), fallback chain, usage logging |
-| 3 | Custom Roles (IAM) | CustomRole model, 40+ permissions, requirePermission middleware |
-| 4 | Multi-Payment Gateways | Stripe/Easypaisa/JazzCash adapters, gateway factory |
-| 5 | Usage-Based Billing | Invoice model, monthly cron, usage/invoice endpoints |
-| 6 | Auto-Trigger Improvements | Retry with backoff, monitoring stats, fraud queue integration |
-| 7 | Frontend Integration | Typed API client, 4 sample React components |
-| 8 | Testing & Hardening | 134 tests, smoke tests, env validation, security headers |
-
----
-
-## Architecture
-
-See [ARCHITECTURE.md](./ARCHITECTURE.md) for layered architecture diagrams and request lifecycle.
-
-See [REPORT.md](./REPORT.md) for comprehensive technical documentation including full API reference, data model, and deployment guide.
+| Suite | Tests | Coverage |
+|-------|-------|----------|
+| `smoke.test.ts` | 39 | Full system: health, CORS, auth, RBAC, chat, visits, damage, export |
+| `forensics.test.ts` | 26 | EXIF, ELA, AI-gen, PDF, video, damage calculation |
+| `v2.test.ts` | 26 | Satellite NDVI, weather API, sequential 3-tier pipeline |
+| `utils.test.ts` | 19 | Generators, fraud scoring, geo calculations |
+| `tenantIsolation.test.ts` | 18 | Cross-tenant data leaks, policy isolation |
+| `iam.test.ts` | 14 | Custom roles, permission matrix |
+| `billing.test.ts` | 14 | Invoice CRUD, admin override |
+| `policyPlans.test.ts` | 14 | Plans, premium calculation, quote flow |
+| `chat-visits-damage.test.ts` | 12 | Auth guards on new endpoints |
+| `claims.test.ts` | 8 | Claim state machine |
+| `farmers.test.ts` | 8 | CRUD, CNIC uniqueness |
+| `billing-markup.test.ts` | 7 | Billing markup logic |
 
 ---
 
 ## Deployment
 
-The backend is designed for easy deployment on:
+### Railway (Production)
 
-- **Railway** — Automatic HTTPS, Neon integration, Redis add-on
-- **Render** — Web service with Redis
-- **Fly.io** — Global deployment with Neon
-- **Vercel** — Not recommended for Express backends (uses serverless functions, not long-running processes)
+`railway.toml` defines 4 services:
 
-### Minimum Requirements
+| Service | Command | Schedule |
+|---------|---------|----------|
+| `web` | `npm start` | Always running |
+| `worker` | `node dist/worker.js` | Always running |
+| `auto-trigger-cron` | `node dist/cron/autoTrigger.cron.js` | Every 6 hours |
+| `billing-cron` | `node dist/cron/billing.cron.js` | 1st of month |
 
-- Node.js 20 LTS
-- Redis (Upstash recommended — free tier: 100MB)
-- PostgreSQL (Neon recommended — free tier: 0.5GB)
-- All 8 required env vars configured
-- SMTP credentials for email notifications (optional)
+### Build & Start
+
+```bash
+npx prisma generate && tsc         # Build
+npx prisma migrate deploy && node dist/server.js  # Start
+```
+
+---
+
+## Documentation
+
+| Document | Description |
+|----------|-------------|
+| [ARCHITECTURE.md](./ARCHITECTURE.md) | Complete system architecture — every route, service, middleware, library, config, database model, security layer |
+| [README.md](./README.md) | This file — overview, quick start, API summary |
 
 ---
 

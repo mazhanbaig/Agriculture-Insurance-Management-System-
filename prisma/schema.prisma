@@ -270,6 +270,9 @@ model Claim {
   statusHistory       ClaimStatusHistory[]
   payments            Payment[]
   fraudAuditLogs      FraudAuditLog[]
+  conversations      Conversation[]
+  visits             Visit[]
+  damageAssessments  DamageAssessment[]
 
   @@index([tenantId])
   @@index([policyId])
@@ -499,4 +502,89 @@ model Notification {
   createdAt         DateTime @default(now())
 
   @@index([userId, isRead])
+}
+
+// ─── Phase 1.6: Chat & Visit System ──────────────────────────────────
+
+enum VisitStatus {
+  SCHEDULED
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+}
+
+model Conversation {
+  id        String   @id @default(uuid())
+  claimId   String
+  claim     Claim    @relation(fields: [claimId], references: [id])
+  tenantId  String
+  title     String?
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  messages Message[]
+
+  @@index([claimId])
+  @@index([tenantId])
+}
+
+model Message {
+  id             String       @id @default(uuid())
+  conversationId String
+  conversation   Conversation @relation(fields: [conversationId], references: [id])
+  senderId       String
+  content        String
+  type           String       @default("text")
+  metadata       Json?
+  createdAt      DateTime     @default(now())
+
+  @@index([conversationId])
+  @@index([senderId])
+}
+
+model Visit {
+  id              String       @id @default(uuid())
+  claimId         String
+  claim           Claim        @relation(fields: [claimId], references: [id])
+  tenantId        String
+  assignedToId    String
+  scheduledDate   DateTime
+  completedAt     DateTime?
+  status          VisitStatus  @default(SCHEDULED)
+  locationLat     Float?
+  locationLng     Float?
+  locationAddress String?
+  notes           String?
+  reportUrl       String?
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+
+  @@index([claimId])
+  @@index([tenantId])
+  @@index([assignedToId])
+  @@index([status])
+}
+
+// ─── Phase 2.5: Damage Assessment ─────────────────────────────────
+
+model DamageAssessment {
+  id                    String   @id @default(uuid())
+  claimId               String
+  claim                 Claim    @relation(fields: [claimId], references: [id])
+  tenantId              String
+  ndviDamagePercent     Float?
+  weatherConfirmed      Boolean?
+  aiDamageScore         Float?
+  groundTruthDamagePercent Float?
+  finalDamagePercent    Float?
+  calculatedPayout      Float?
+  calculationLog        Json?
+  assessedByUserId      String?
+  assessedAt            DateTime?
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  @@index([claimId])
+  @@index([tenantId])
 }

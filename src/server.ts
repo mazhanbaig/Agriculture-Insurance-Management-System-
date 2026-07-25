@@ -1,6 +1,7 @@
 import express from "express";
 import cors from "cors";
 import helmet from "helmet";
+import http from "http";
 import pinoHttp from "pino-http";
 import { randomUUID } from "crypto";
 import pino from "pino";
@@ -28,6 +29,9 @@ import billingRoutes from "./routes/billing.routes";
 import tenantFieldRoutes from "./routes/tenantFields.routes";
 import iamRoutes from "./routes/iam.routes";
 import policyRequestRoutes from "./routes/policyRequests.routes";
+import chatRoutes from "./routes/chat.routes";
+import visitRoutes from "./routes/visits.routes";
+import damageRoutes from "./routes/damage.routes";
 
 const logger = pino({ name: "aims" });
 const app = express();
@@ -121,6 +125,9 @@ app.use("/api/v1/billing", billingRoutes);
 app.use("/api/v1/settings/fields", tenantFieldRoutes);
 app.use("/api/v1/iam", iamRoutes);
 app.use("/api/v1/policy-requests", policyRequestRoutes);
+app.use("/api/v1/chat", chatRoutes);
+app.use("/api/v1/visits", visitRoutes);
+app.use("/api/v1/damage", damageRoutes);
 
 // Initialize background workers (only in non-test mode)
 if (process.env.NODE_ENV !== "test") {
@@ -128,6 +135,11 @@ if (process.env.NODE_ENV !== "test") {
   require("./jobs/auto-trigger-worker");
   require("./jobs/notificationWorker");
   require("./jobs/billingWorker");
+  // OCR worker — registered via createOcrWorker in worker.ts
+  const { Worker } = require("bullmq");
+  const { redis } = require("./lib/redis");
+  const { processOcrJob } = require("./jobs/ocrWorker");
+  new Worker("ocr", processOcrJob, { connection: redis, concurrency: 2 });
 }
 app.use(errorHandler);
 
@@ -149,7 +161,10 @@ async function start() {
 
   const PORT = parseInt(process.env.PORT || "4000", 10);
   if (process.env.NODE_ENV !== "test") {
-    app.listen(PORT, () => logger.info(`Server running on port ${PORT}`));
+    const server = http.createServer(app);
+    const { initSocket } = await import("./lib/socket");
+    initSocket(server);
+    server.listen(PORT, () => logger.info(`Server running on port ${PORT}`));
     // Schedule background jobs
     // Auto-trigger cron (every 6 hours)
     try {

@@ -1,15 +1,13 @@
 import { Job, Queue, Worker } from "bullmq";
 import { redis } from "../lib/redis";
 import { prisma } from "../lib/prisma";
-import { compareNDVI } from "../lib/sentinel";
+import { compareNDVI, healthCheck } from "../lib/sentinel";
 import { generateClaimNumber } from "../utils/generators";
 import { notificationQueue, autoTriggerQueue, fraudQueue } from "../lib/bullmq";
 import { mergeAutoTriggerConfig, type AutoTriggerConfig } from "../config/autoTriggerConfig";
 import { enqueueAsyncFraudAnalysis, runSyncForensics } from "../services/fraud.service";
 import { checkWeatherNow } from "../lib/weather";
 import logger from "../utils/logger";
-
-// ─── Monitoring counters ──────────────────────────────────────────────
 
 interface AutoTriggerStats {
   policiesChecked: number;
@@ -21,6 +19,9 @@ interface AutoTriggerStats {
   claimsAutoApproved: number;
   errors: number;
   totalDurationMs: number;
+  ndviApiAvailable: boolean;
+  ndviApiLatencyMs: number;
+  ndviQuotaRemaining: number;
 }
 
 function createStats(): AutoTriggerStats {
@@ -34,6 +35,9 @@ function createStats(): AutoTriggerStats {
     claimsAutoApproved: 0,
     errors: 0,
     totalDurationMs: 0,
+    ndviApiAvailable: true,
+    ndviApiLatencyMs: 0,
+    ndviQuotaRemaining: 0,
   };
 }
 
@@ -45,20 +49,12 @@ function logStats(stats: AutoTriggerStats, tenantId?: string): void {
   });
 }
 
-// ─── Weather check with retry ─────────────────────────────────────────
-
 interface WeatherResult {
   confirmed: boolean;
   event?: string;
   data?: any;
 }
 
-/**
- * Check if weather confirms a disaster event at the given location.
- * Uses lat/lon coordinates from the land parcel for more accurate results.
- * Auto-trigger monitors CURRENT conditions (NDVI drop is happening now),
- * so current weather check is appropriate here.
- */
 async function checkWeatherConfirmation(
   lat: number | null | undefined,
   lon: number | null | undefined
@@ -75,13 +71,6 @@ async function checkWeatherConfirmation(
   }
 }
 
-// ─── Policy auto-trigger check ────────────────────────────────────────
-
-/**
- * Run the auto-trigger check for a single active policy.
- * This fetches NDVI data, checks weather, creates claim if conditions met,
- * then enqueues fraud analysis.
- */
 async function checkPolicyAutoTrigger(
   policyId: string,
   tenantId: string,
@@ -101,7 +90,6 @@ async function checkPolicyAutoTrigger(
 
   if (!policy.landParcel?.latitude || !policy.landParcel?.longitude) return;
 
-  // Resolve auto-trigger config from the policy plan's config
   const planConfig = policy.policyPlan?.config as Record<string, any> | null;
   const rawAutoTrigger = planConfig?.autoTrigger as Partial<AutoTriggerConfig> | undefined;
   const autoTriggerConfig = mergeAutoTriggerConfig(rawAutoTrigger);
@@ -109,7 +97,6 @@ async function checkPolicyAutoTrigger(
   if (!autoTriggerConfig.enabled) return;
   stats.autoTriggerEnabled++;
 
-  // Get NDVI data with retry built into compareNDVI
   const ndviResult = await compareNDVI(
     policy.landParcel.latitude,
     policy.landParcel.longitude,
@@ -118,14 +105,13 @@ async function checkPolicyAutoTrigger(
   );
 
   if (!ndviResult.ndviPre || !ndviResult.ndviPost) {
-    logger.info({ policyId }, "NDVI data unavailable for auto-trigger check");
+    logger.info({ policyId }, "NDVI data unavailable for auto-trigger check — fallback to weather only");
     return;
   }
   stats.ndviDataAvailable++;
 
   const ndviDrop = ndviResult.ndviPre - ndviResult.ndviPost;
 
-  // Check NDVI threshold
   if (!ndviResult.thresholdBreached) {
     await prisma.autoTriggerLog.create({
       data: {
@@ -139,7 +125,6 @@ async function checkPolicyAutoTrigger(
   }
   stats.thresholdBreached++;
 
-  // Weather verification
   let weatherConfirmed = !autoTriggerConfig.weatherCheck;
   let weatherEvent: string | undefined;
   let weatherData: any = null;
@@ -169,7 +154,6 @@ async function checkPolicyAutoTrigger(
   }
   stats.weatherConfirmed++;
 
-  // All conditions met — auto-create claim
   const claimNumber = generateClaimNumber();
   const claimedAmount = policy.coverageAmount * autoTriggerConfig.claimPercentage;
 
@@ -192,7 +176,7 @@ async function checkPolicyAutoTrigger(
       fromStatus: "SUBMITTED",
       toStatus: "SUBMITTED",
       changedByUserId: "",
-      note: "Auto-triggered by satellite NDVI + weather monitoring",
+      note: "Auto-triggered by Copernicus NDVI + weather monitoring",
     },
   });
 
@@ -214,7 +198,6 @@ async function checkPolicyAutoTrigger(
   stats.claimsCreated++;
   logger.info({ policyId, claimId: claim.id, claimNumber, ndviDrop }, "Auto-triggered claim created");
 
-  // Run sync fraud forensics (sync checks, < 100ms)
   try {
     const syncResult = await runSyncForensics(
       claim.id, tenantId, policy.farmerId,
@@ -226,10 +209,8 @@ async function checkPolicyAutoTrigger(
       }
     );
 
-    // Enqueue async fraud analysis (AI, satellite, weather deep checks)
     await enqueueAsyncFraudAnalysis(claim.id, tenantId);
 
-    // Auto-approve if configured and fraud score is low
     if (
       autoTriggerConfig.autoApprove &&
       syncResult.score < autoTriggerConfig.autoApproveMaxScore
@@ -261,12 +242,10 @@ async function checkPolicyAutoTrigger(
       logger.info({ claimId: claim.id, score: syncResult.score }, "Auto-triggered claim auto-approved");
     }
   } catch (error) {
-    logger.error({ error, claimId: claim.id }, "Auto-trigger fraud analysis failed for claim — claim remains SUBMITTED for manual review");
+    logger.error({ error, claimId: claim.id }, "Auto-trigger fraud analysis failed — claim remains SUBMITTED for manual review");
     stats.errors++;
   }
 }
-
-// ─── Worker ───────────────────────────────────────────────────────────
 
 const autoTriggerWorker = new Worker(
   "auto-trigger",
@@ -275,7 +254,24 @@ const autoTriggerWorker = new Worker(
     const { tenantId, policyIds }: { tenantId?: string; policyIds?: string[] } = job.data;
     const stats = createStats();
 
-    logger.info({ jobId: job.id, policyCount: policyIds?.length }, "Processing auto-trigger batch");
+    const ndviHealth = await healthCheck();
+    stats.ndviApiAvailable = ndviHealth.ok;
+    stats.ndviApiLatencyMs = ndviHealth.latencyMs;
+    stats.ndviQuotaRemaining = ndviHealth.quotaLimit - ndviHealth.quotaUsed;
+
+    if (!ndviHealth.ok) {
+      logger.warn({
+        jobId: job.id,
+        ndviHealth: ndviHealth.message,
+      }, "Copernicus API unhealthy — skipping NDVI checks this batch, using weather only");
+    }
+
+    logger.info({
+      jobId: job.id,
+      policyCount: policyIds?.length,
+      ndviAvailable: ndviHealth.ok,
+      ndviQuotaRemaining: ndviHealth.quotaLimit - ndviHealth.quotaUsed,
+    }, "Processing auto-trigger batch");
 
     if (policyIds && policyIds.length > 0) {
       for (const policyId of policyIds) {
@@ -287,7 +283,6 @@ const autoTriggerWorker = new Worker(
         }
       }
     } else {
-      // Fetch all active policies. The query uses include to get policyPlan for config check.
       const policies = await prisma.policy.findMany({
         where: { ...(tenantId ? { tenantId } : {}), status: "ACTIVE" },
         include: { policyPlan: true, landParcel: true },
@@ -318,10 +313,17 @@ const autoTriggerWorker = new Worker(
 autoTriggerWorker.on("completed", (job) => logger.info({ jobId: job.id }, "Auto-trigger done"));
 autoTriggerWorker.on("failed", (job, error) => logger.error({ jobId: job?.id, error }, "Auto-trigger failed"));
 
-logger.info("Auto-trigger worker initialized (Phase 6 — retry + monitoring)");
+logger.info("Auto-trigger worker initialized (Copernicus CDSE — health check + quota monitoring)");
 export { autoTriggerWorker };
 
 export async function scheduleAutoTriggerCheck(): Promise<void> {
+  const ndviHealth = await healthCheck();
+  logger.info({
+    ndviAvailable: ndviHealth.ok,
+    ndviLatencyMs: ndviHealth.latencyMs,
+    ndviQuotaRemaining: ndviHealth.quotaLimit - ndviHealth.quotaUsed,
+  }, "Auto-trigger scheduled with Copernicus health check");
+
   await autoTriggerQueue.add(
     "auto-trigger-batch",
     {},

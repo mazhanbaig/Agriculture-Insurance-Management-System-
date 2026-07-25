@@ -2,8 +2,9 @@ import { createHash } from "crypto";
 import { readFile } from "fs/promises";
 import { prisma } from "../lib/prisma";
 import { cloudinary } from "../lib/cloudinary";
-import { ocrQueue } from "../lib/bullmq";
+import { ocrQueue, fraudQueue } from "../lib/bullmq";
 import { AppError } from "../middleware/errorHandler";
+import { extractExif, computeEla } from "./forensics.service";
 import logger from "../utils/logger";
 
 /**
@@ -114,6 +115,19 @@ export async function uploadDocument(
     );
   }
 
+  // Cross-claim hash dedup (same file in different claim)
+  const crossClaimDup = await prisma.claimDocument.findFirst({
+    where: { fileHash, claimId: { not: claimId } },
+  });
+  if (crossClaimDup) {
+    logger.warn({
+      fileHash: fileHash.slice(0, 16),
+      claimId,
+      matchId: crossClaimDup.id,
+      matchClaimId: crossClaimDup.claimId,
+    }, "Cross-claim duplicate file detected");
+  }
+
   // MIME type detection from magic bytes
   const detectedMime = detectMimeFromBuffer(fileBuffer);
   const mimeType = detectedMime || "application/octet-stream";
@@ -136,6 +150,34 @@ export async function uploadDocument(
     ],
   });
 
+  // ─── Layer 2: EXIF & ELA (image files only) ─────────────────────
+
+  let exifData: Record<string, any> | null = null;
+  let elaData: Record<string, any> | null = null;
+
+  if (mimeType.startsWith("image/")) {
+    try {
+      const exif = await extractExif(filePath);
+      exifData = exif.exifPresent
+        ? { make: exif.make, model: exif.model, dateTimeOriginal: exif.dateTimeOriginal, gpsLatitude: exif.gpsLatitude, gpsLongitude: exif.gpsLongitude, software: exif.software, suspiciousFlags: exif.suspiciousFlags }
+        : { exifPresent: false, suspiciousFlags: exif.suspiciousFlags };
+    } catch (exifError) {
+      logger.warn({ error: exifError, claimId }, "EXIF extraction failed during upload");
+    }
+
+    try {
+      const ela = await computeEla(filePath);
+      elaData = { elaScore: ela.elaScore, elaRegions: ela.elaRegions, modified: ela.modified, detail: ela.detail };
+    } catch (elaError) {
+      logger.warn({ error: elaError, claimId }, "ELA analysis failed during upload");
+    }
+  }
+
+  // Cross-claim duplicate — enqueue re-check fraud analysis
+  if (crossClaimDup) {
+    await fraudQueue.add("fraud-analysis", { claimId, tenantId }, { delay: 5000 });
+  }
+
   // ─── Create Document Record ──────────────────────────────────────
 
   const document = await prisma.claimDocument.create({
@@ -147,6 +189,7 @@ export async function uploadDocument(
       fileSize: result.bytes,
       mimeType,
       fileHash,
+      ocrExtractedData: exifData || elaData ? { exif: exifData, ela: elaData } as any : undefined,
     },
   });
 
@@ -163,8 +206,11 @@ export async function uploadDocument(
       mimeType,
       fileHash: fileHash.slice(0, 16),
       fileSize: result.bytes,
+      exifExtracted: !!exifData,
+      elaComputed: !!elaData,
+      crossClaimDup: !!crossClaimDup,
     },
-    "Document uploaded with Layer 1 forensics"
+    "Document uploaded with Layer 1+2 forensics"
   );
 
   return document;

@@ -1,26 +1,36 @@
 import { Job } from "bullmq";
+import { createWorker } from "tesseract.js";
 import { prisma } from "../lib/prisma";
-import pino from "pino";
+import logger from "../utils/logger";
 
-const logger = pino({ name: "ocr-worker" });
+let worker: any = null;
 
-/**
- * Process an OCR job for a claim document.
- * In MVP, this simulates OCR by extracting basic metadata.
- * In production, this would call a real OCR service.
- */
+async function getWorker(): Promise<any> {
+  if (worker) return worker;
+  worker = await createWorker("eng");
+  logger.info("Tesseract.js worker initialized");
+  return worker;
+}
+
 export async function processOcrJob(job: Job): Promise<void> {
-  const { documentId } = job.data as { documentId: string };
+  const { documentId, imageUrl } = job.data as { documentId: string; imageUrl: string };
 
-  logger.info({ documentId }, "Processing OCR job");
+  logger.info({ documentId, imageUrl }, "Processing OCR job with Tesseract.js");
 
   try {
-    // Simulate OCR extraction
+    const tessWorker = await getWorker();
+    const { data } = await tessWorker.recognize(imageUrl);
+
     const extractedData = {
       processedAt: new Date().toISOString(),
-      textFound: true,
-      confidence: 0.85,
-      documentType: "claim_document",
+      textFound: (data.text || "").trim().length > 0,
+      confidence: data.confidence || 0,
+      textLength: (data.text || "").length,
+      words: (data.words || []).map((w: any) => ({
+        text: w.text,
+        confidence: w.confidence,
+      })),
+      textPreview: (data.text || "").slice(0, 5000),
     };
 
     await prisma.claimDocument.update({
@@ -30,9 +40,19 @@ export async function processOcrJob(job: Job): Promise<void> {
       },
     });
 
-    logger.info({ documentId }, "OCR processing completed");
+    logger.info({ documentId, confidence: data.confidence, textLength: extractedData.textLength }, "OCR processing completed");
   } catch (error) {
-    logger.error({ error, documentId }, "OCR processing failed");
-    throw error;
+    logger.error({ error, documentId }, "OCR processing failed, storing error");
+    await prisma.claimDocument.update({
+      where: { id: documentId },
+      data: {
+        ocrExtractedData: {
+          processedAt: new Date().toISOString(),
+          error: String(error),
+          textFound: false,
+          confidence: 0,
+        },
+      },
+    });
   }
 }

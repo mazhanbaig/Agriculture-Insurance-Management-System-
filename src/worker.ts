@@ -67,6 +67,16 @@ async function start(): Promise<void> {
     logger.error({ err }, "Failed to initialize auto-trigger worker");
   }
 
+  try {
+    const { Worker } = await import("bullmq");
+    const { redis } = await import("./lib/redis");
+    const { processOcrJob } = await import("./jobs/ocrWorker");
+    new Worker("ocr", processOcrJob, { connection: redis, concurrency: 2 });
+    logger.info("OCR worker initialized");
+  } catch (err) {
+    logger.error({ err }, "Failed to initialize OCR worker");
+  }
+
   logger.info("All workers initialized — listening for jobs...");
 
   // Graceful shutdown

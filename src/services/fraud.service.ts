@@ -90,6 +90,97 @@ export async function runSyncForensics(
     ruleResults["FARMER_HISTORY"] = { triggered: false, count: recentClaims };
   }
 
+  // 4. Document forensics check (EXIF, ELA, hash, video, PDF, AI-gen)
+  const documents = await prisma.claimDocument.findMany({ where: { claimId } });
+
+  for (const doc of documents) {
+    const storedMeta = doc.ocrExtractedData as Record<string, any> | null;
+
+    // EXIF check from stored upload-time data
+    if (doc.mimeType?.startsWith("image/")) {
+      const exifData = storedMeta?.exif as Record<string, any> | null;
+      const exifFlags: string[] = exifData?.suspiciousFlags || [];
+
+      if (exifFlags.length > 0) {
+        ruleResults["EXIF_CHECK"] = { triggered: true, flags: exifFlags, documentId: doc.id };
+
+        if (exifFlags.includes("EXIF_STRIPPED") || exifFlags.includes("EXIF_EXTRACTION_FAILED")) {
+          checks.push({ weight: FRAUD_CHECK_WEIGHTS.EXIF_MISSING, triggered: true });
+          flags.push("EXIF_MISSING");
+        } else {
+          checks.push({ weight: Math.round(FRAUD_CHECK_WEIGHTS.EXIF_MISSING * 0.5), triggered: true });
+          flags.push("EXIF_SUSPICIOUS");
+        }
+      }
+
+      // ELA check from stored upload-time data
+      const elaData = storedMeta?.ela as Record<string, any> | null;
+      if (elaData?.modified) {
+        checks.push({ weight: FRAUD_CHECK_WEIGHTS.FILE_SPOOF, triggered: true });
+        flags.push("FILE_SPOOF_ELA");
+        ruleResults["ELA_CHECK"] = { triggered: true, score: elaData.elaScore, documentId: doc.id };
+      }
+
+      // AI-gen detection using stored EXIF
+      if (exifFlags.length > 0 || !exifData?.exifPresent) {
+        let aiScore = 0;
+        if (exifData?.exifPresent === false) aiScore += 20;
+        if (exifFlags.includes("NO_GPS_DATA") && exifFlags.includes("NO_DATE_ORIGINAL")) aiScore += 30;
+        if (exifFlags.includes("EDITOR_SOFTWARE_DETECTED")) aiScore += 15;
+        if (exifFlags.includes("EXIF_STRIPPED")) aiScore += 25;
+
+        if (aiScore >= 50) {
+          checks.push({ weight: FRAUD_CHECK_WEIGHTS.AI_IMAGE_CHECK, triggered: true });
+          flags.push("AI_GENERATED_SUSPECTED");
+          ruleResults["AI_GEN_CHECK"] = { triggered: true, score: aiScore, documentId: doc.id };
+        }
+      }
+    }
+
+    // Video analysis (stored during upload — simplified here from stored metadata)
+    if (doc.mimeType?.startsWith("video/")) {
+      const videoMeta = storedMeta?.video as Record<string, any> | undefined;
+      const videoFlags: string[] = videoMeta?.suspiciousFlags || [];
+      if (videoFlags.length > 0) {
+        checks.push({ weight: Math.round(FRAUD_CHECK_WEIGHTS.FILE_SPOOF * 0.5), triggered: true });
+        flags.push("VIDEO_SUSPICIOUS");
+        ruleResults["VIDEO_CHECK"] = { triggered: true, flags: videoFlags, documentId: doc.id };
+      }
+    }
+
+    // PDF analysis from stored OCR data
+    if (doc.mimeType === "application/pdf") {
+      const pdfText = storedMeta?.extractedText || "";
+      if (!pdfText || pdfText.trim().length < 10) {
+        checks.push({ weight: Math.round(FRAUD_CHECK_WEIGHTS.FILE_SPOOF * 0.3), triggered: true });
+        flags.push("PDF_NO_TEXT_CONTENT");
+        ruleResults["PDF_CHECK"] = { triggered: true, documentId: doc.id, detail: "PDF has no extractable text" };
+      }
+    }
+  }
+
+  // 5. Cross-claim hash duplicate check
+  if (documents.length > 0) {
+    let foundCrossDuplicate = false;
+    for (const doc of documents) {
+      if (!doc.fileHash) continue;
+      const crossDup = await prisma.claimDocument.findFirst({
+        where: { fileHash: doc.fileHash, claimId: { not: claimId } },
+      });
+      if (crossDup) {
+        foundCrossDuplicate = true;
+        ruleResults["HASH_DUPLICATE"] = { triggered: true, detail: `Hash matches document ${crossDup.id} in another claim`, documentId: doc.id, matchId: crossDup.id };
+        break;
+      }
+    }
+    if (foundCrossDuplicate) {
+      checks.push({ weight: FRAUD_CHECK_WEIGHTS.HASH_DUPLICATE, triggered: true });
+      flags.push("HASH_DUPLICATE");
+    } else {
+      ruleResults["HASH_DUPLICATE"] = { triggered: false };
+    }
+  }
+
   // Calculate base score from sync checks
   const score = calculateBaseFraudScore(checks);
   const verdict = scoreToVerdict(score);
@@ -118,6 +209,12 @@ export async function runSyncForensics(
   });
 
   logger.info({ claimId, score, verdict, flags }, "Sync fraud analysis completed");
+
+  try {
+    const { notifyFraudUpdate } = require("../lib/socket");
+    notifyFraudUpdate(claimId, "system", score, verdict);
+  } catch {
+  }
 
   return { score, verdict, flags, ruleResults };
 }

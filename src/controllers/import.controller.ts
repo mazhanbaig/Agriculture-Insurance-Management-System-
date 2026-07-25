@@ -1,6 +1,7 @@
 import { Request, Response, NextFunction } from "express";
 import * as importService from "../services/import.service";
 import { importQueue } from "../lib/bullmq";
+import logger from "../utils/logger";
 
 /**
  * Estimate record count from import data string.
@@ -83,4 +84,33 @@ export async function importFarmersPolicies(req: Request, res: Response, next: N
       });
     }
   } catch (error) { next(error); }
+}
+
+export async function exportFarmers(req: Request, res: Response, next: NextFunction) {
+  try {
+    const tenantId = req.user!.tenantId;
+    const format = (req.query.format as string) === "csv" ? "csv" : "json";
+    const result = await importService.exportFarmers(tenantId, format);
+    res.setHeader("Content-Type", result.contentType);
+    res.setHeader("Content-Disposition", `attachment; filename="${result.filename}"`);
+    res.send(result.data);
+  } catch (error) {
+    logger.error({ error }, "Farmer export failed");
+    next(error);
+  }
+}
+
+export async function exportClaims(req: Request, res: Response, next: NextFunction) {
+  try {
+    const tenantId = req.user!.tenantId;
+    const format = (req.query.format as string) === "csv" ? "csv" : "json";
+    const status = req.query.status as string | undefined;
+    const result = await importService.exportClaims(tenantId, format, status);
+    res.setHeader("Content-Type", result.contentType);
+    res.setHeader("Content-Disposition", `attachment; filename="${result.filename}"`);
+    res.send(result.data);
+  } catch (error) {
+    logger.error({ error }, "Claims export failed");
+    next(error);
+  }
 }

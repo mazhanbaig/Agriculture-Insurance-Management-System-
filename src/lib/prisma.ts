@@ -22,22 +22,14 @@ function createPrismaClient(): PrismaClient {
   if (process.env.USE_NEON_ADAPTER === "true") {
     try {
       // Use require() to avoid TypeScript declaration issues with Neon packages
-      const { neon } = require("@neondatabase/serverless");
       const { PrismaNeonHttp } = require("@prisma/adapter-neon");
-
-      if (typeof neon !== "function") {
-        throw new Error(
-          `@neondatabase/serverless exports a non-function neon: ${typeof neon}`
-        );
-      }
 
       const url = process.env.DATABASE_URL;
       if (!url || typeof url !== "string") {
         throw new Error("DATABASE_URL is not set or not a string");
       }
 
-      const sql = neon(url);
-      const adapter = new PrismaNeonHttp(sql);
+      const adapter = new PrismaNeonHttp(url, {});
       console.log("Using Neon serverless adapter for Prisma");
       return new PrismaClient({ adapter });
     } catch (adapterError) {

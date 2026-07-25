@@ -71,7 +71,7 @@ jest.mock("../src/lib/prisma", () => ({
     },
     claimDocument: {
       findUnique: jest.fn(),
-      findMany: jest.fn(),
+      findMany: jest.fn().mockResolvedValue([]),
       create: jest.fn(),
       delete: jest.fn(),
     },

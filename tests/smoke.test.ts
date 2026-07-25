@@ -27,7 +27,7 @@ jest.mock("../src/lib/prisma", () => {
     policy: { findUnique: fn(), findFirst: fn(), findMany: fn(), count: fn(), create: fn(), update: fn(), updateMany: fn() },
     claim: { findUnique: fn(), findFirst: fn(), findMany: fn(), count: fn(), create: fn(), update: fn() },
     claimStatusHistory: { create: fn(), findMany: fn() },
-    claimDocument: { findUnique: fn(), findMany: fn(), create: fn(), delete: fn() },
+    claimDocument: { findUnique: fn(), findFirst: fn(), findMany: fn(), create: fn(), delete: fn(), update: fn() },
     fraudAuditLog: { create: fn(), findMany: fn() },
     autoTriggerLog: { create: fn(), findMany: fn() },
     payment: { create: fn(), findMany: fn(), updateMany: fn(), aggregate: fn() },
@@ -38,6 +38,10 @@ jest.mock("../src/lib/prisma", () => {
     customRole: { findUnique: fn(), findFirst: fn(), findMany: fn(), create: fn(), update: fn(), delete: fn(), count: fn() },
     invoice: { findUnique: fn(), findFirst: fn(), findMany: fn(), create: fn(), update: fn(), count: fn() },
     invoiceLineItem: { create: fn() },
+    conversation: { findUnique: fn(), findFirst: fn(), findMany: fn(), create: fn(), update: fn(), count: fn() },
+    message: { findUnique: fn(), findMany: fn(), create: fn(), count: fn() },
+    visit: { findUnique: fn(), findFirst: fn(), findMany: fn(), create: fn(), update: fn(), count: fn() },
+    damageAssessment: { findUnique: fn(), findFirst: fn(), findMany: fn(), create: fn(), update: fn() },
     $transaction: jest.fn().mockImplementation((queries: any[]) => Promise.resolve(queries.map(() => ({ count: 0 })))),
   };
   prisma = mock;
@@ -135,6 +139,10 @@ describe("🔥 SMOKE TEST: Full System Verification", () => {
         require("../src/services/tenantSettings.service");
         require("../src/services/import.service");
         require("../src/services/policyRequests.service");
+        require("../src/services/forensics.service");
+        require("../src/services/chat.service");
+        require("../src/services/visit.service");
+        require("../src/services/damage.service");
       }).not.toThrow();
     });
 
@@ -159,7 +167,7 @@ describe("🔥 SMOKE TEST: Full System Verification", () => {
 
   // ─── 6. Route File Integrity ───────────────────────────────────
   describe("6. Route File Integrity", () => {
-    it("should import all 18 route files without error", () => {
+    it("should import all 21 route files without error", () => {
       expect(() => {
         require("../src/routes/auth.routes");
         require("../src/routes/farmers.routes");
@@ -179,6 +187,9 @@ describe("🔥 SMOKE TEST: Full System Verification", () => {
         require("../src/routes/tenantFields.routes");
         require("../src/routes/iam.routes");
         require("../src/routes/policyRequests.routes");
+        require("../src/routes/chat.routes");
+        require("../src/routes/visits.routes");
+        require("../src/routes/damage.routes");
       }).not.toThrow();
     });
   });
@@ -390,13 +401,12 @@ describe("🔥 SMOKE TEST: Full System Verification", () => {
 
   // ─── 14. Route Registration ──────────────────────────────────────
   describe("14. API Route Registration", () => {
-    it("should have all 18 route modules mounted", () => {
-      // Verify all route files exist by checking they export a Router
+    it("should have all 21 route modules mounted", () => {
       const routes = [
         "auth", "farmers", "landParcels", "policyPlans", "policies",
         "claims", "documents", "payments", "notifications", "admin",
         "platform", "tenantSettings", "import", "webhook", "billing",
-        "tenantFields", "iam", "policyRequests"
+        "tenantFields", "iam", "policyRequests", "chat", "visits", "damage"
       ];
       routes.forEach((route) => {
         expect(() => require(`../src/routes/${route}.routes`)).not.toThrow();

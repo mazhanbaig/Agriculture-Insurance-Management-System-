@@ -12,5 +12,7 @@ router.use(requireRole("TENANT_ADMIN", "PLATFORM_ADMIN"));
 
 router.post("/policy-plans", validate(importPolicyPlansSchema), importController.importPolicyPlans);
 router.post("/farmers-policies", validate(importFarmersPoliciesSchema), importController.importFarmersPolicies);
+router.get("/export/farmers", importController.exportFarmers);
+router.get("/export/claims", importController.exportClaims);
 
 export default router;
