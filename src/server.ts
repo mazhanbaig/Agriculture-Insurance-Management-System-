@@ -85,6 +85,11 @@ app.use((req: express.Request, _res: express.Response, next: express.NextFunctio
   next();
 });
 
+// Health check — must be first before any middleware that could fail
+app.get("/health", (_req, res) => {
+  res.json({ status: "ok", timestamp: new Date().toISOString() });
+});
+
 app.use(helmet());
 app.use(cors());
 // Stripe webhook needs raw body before JSON parsing
@@ -104,9 +109,7 @@ app.use(pinoHttp({
 app.use(apiLimiter);
 app.use(resolveTenant);
 
-app.get("/health", (_req, res) => {
-  res.json({ status: "ok", timestamp: new Date().toISOString() });
-});
+// API routes
 
 app.use("/api/v1/auth", authRoutes);
 app.use("/api/v1/farmers", farmerRoutes);
@@ -130,16 +133,20 @@ app.use("/api/v1/visits", visitRoutes);
 app.use("/api/v1/damage", damageRoutes);
 
 // Initialize background workers (only in non-test mode)
+// Wrapped in try/catch to prevent startup crashes (e.g. during Railway health checks)
 if (process.env.NODE_ENV !== "test") {
-  require("./jobs/fraud-worker");
-  require("./jobs/auto-trigger-worker");
-  require("./jobs/notificationWorker");
-  require("./jobs/billingWorker");
-  // OCR worker — registered via createOcrWorker in worker.ts
-  const { Worker } = require("bullmq");
-  const { redis } = require("./lib/redis");
-  const { processOcrJob } = require("./jobs/ocrWorker");
-  new Worker("ocr", processOcrJob, { connection: redis, concurrency: 2 });
+  try {
+    require("./jobs/fraud-worker");
+    require("./jobs/auto-trigger-worker");
+    require("./jobs/notificationWorker");
+    require("./jobs/billingWorker");
+    const { Worker } = require("bullmq");
+    const { redis } = require("./lib/redis");
+    const { processOcrJob } = require("./jobs/ocrWorker");
+    new Worker("ocr", processOcrJob, { connection: redis, concurrency: 2 });
+  } catch (err) {
+    logger.error({ err }, "Failed to initialize background workers — continuing without them");
+  }
 }
 app.use(errorHandler);
 
