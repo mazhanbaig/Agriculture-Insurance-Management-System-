@@ -164,10 +164,7 @@ async function start() {
     await checkRedisConnection();
     logger.info("Redis connection verified successfully");
   } catch (err) {
-    logger.error({ err }, "Redis connection failed — BullMQ queues will not work");
-    if (process.env.NODE_ENV === "production") {
-      process.exit(1);
-    }
+    logger.error({ err }, "Redis connection failed — BullMQ queues will not work (server continues)");
   }
 
   // Schedule background jobs (non-blocking)
