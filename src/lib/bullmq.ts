@@ -1,4 +1,4 @@
-import { Queue, Worker, Job } from "bullmq";
+import { Queue } from "bullmq";
 import { redis } from "./redis";
 
 const connection = redis;
@@ -61,22 +61,4 @@ export const autoTriggerQueue = new Queue(AUTO_TRIGGER_QUEUE_NAME, {
   },
 });
 
-// --- Worker definitions (processors are in src/jobs/) ---
 
-export function createOcrWorker(
-  processor: (job: Job) => Promise<void>
-): Worker {
-  return new Worker(OCR_QUEUE_NAME, processor, { connection });
-}
-
-export function createNotificationWorker(
-  processor: (job: Job) => Promise<void>
-): Worker {
-  return new Worker(NOTIFICATION_QUEUE_NAME, processor, { connection });
-}
-
-export function createImportWorker(
-  processor: (job: Job) => Promise<void>
-): Worker {
-  return new Worker(IMPORT_QUEUE_NAME, processor, { connection });
-}

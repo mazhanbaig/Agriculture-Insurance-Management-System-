@@ -6,7 +6,7 @@ import { randomUUID } from "crypto";
 import { apiLimiter } from "./middleware/rateLimiter";
 import { resolveTenant } from "./middleware/tenant";
 import { errorHandler } from "./middleware/errorHandler";
-import { logger } from "./lib/logger";
+import logger from "./utils/logger";
 import authRoutes from "./routes/auth.routes";
 import farmerRoutes from "./routes/farmers.routes";
 import landParcelRoutes from "./routes/landParcels.routes";
