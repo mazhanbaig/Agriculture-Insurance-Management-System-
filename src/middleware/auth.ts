@@ -57,7 +57,8 @@ export async function requireAuth(
     let email: string;
 
     // Check for dev token (bypasses Supabase)
-    if (token.startsWith("dev_token_")) {
+    // ⚠️ Never accept dev tokens in production
+    if (token.startsWith("dev_token_") && process.env.NODE_ENV !== "production") {
       // Format: dev_token_{authId}_{timestamp}
       // Token parts: ['dev', 'token', 'dev', '{uuid}', '{timestamp}']
       // authId = parts[2..end-1] joined back (e.g., 'dev_uuid')
