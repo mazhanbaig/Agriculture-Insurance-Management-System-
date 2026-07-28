@@ -19,6 +19,18 @@ export async function listStaffUsers(tenantId: string, page: number, limit: numb
   return { users, pagination: { page, limit, total, totalPages: Math.ceil(total / limit) } };
 }
 
+export async function getStaffById(userId: string, tenantId: string) {
+  const user = await prisma.user.findFirst({ where: { id: userId, tenantId } });
+  if (!user) throw new AppError("Staff not found", 404);
+  return user;
+}
+
+export async function updateStaffById(userId: string, tenantId: string, data: { role?: string; phone?: string }) {
+  const user = await prisma.user.findFirst({ where: { id: userId, tenantId } });
+  if (!user) throw new AppError("Staff not found", 404);
+  return prisma.user.update({ where: { id: userId }, data: data as any });
+}
+
 export async function toggleUserStatus(userId: string, tenantId: string) {
   const user = await prisma.user.findFirst({ where: { id: userId, tenantId } });
   if (!user) throw new AppError("User not found", 404);

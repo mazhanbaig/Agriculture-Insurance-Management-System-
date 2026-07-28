@@ -25,3 +25,17 @@ export async function getPolicy(req: Request, res: Response, next: NextFunction)
   try { const policy = await policyService.getPolicy(String(req.params.id), req.user!.tenantId); res.json({ status: "success", data: policy }); }
   catch (error) { next(error); }
 }
+
+export async function listAllPolicies(req: Request, res: Response, next: NextFunction) {
+  try {
+    const page = parseInt(String(req.query.page ?? "1")) || 1;
+    const limit = parseInt(String(req.query.limit ?? "20")) || 20;
+    const result = await policyService.listTenantPolicies(req.user!.tenantId, page, limit);
+    res.json({ status: "success", ...result });
+  } catch (error) { next(error); }
+}
+
+export async function getAnyPolicy(req: Request, res: Response, next: NextFunction) {
+  try { const policy = await policyService.getPolicy(String(req.params.id), req.user!.tenantId); res.json({ status: "success", data: policy }); }
+  catch (error) { next(error); }
+}

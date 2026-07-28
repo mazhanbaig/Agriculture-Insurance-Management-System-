@@ -63,18 +63,33 @@ export async function register(data: {
     if (defaultTenant) tenantId = defaultTenant.id;
   }
 
-  const { data: authData, error } = await supabase.auth.signUp({
-    email: data.email,
-    password: data.password,
-  });
+  let authData, error;
+  try {
+    const result = await supabase.auth.signUp({
+      email: data.email,
+      password: data.password,
+    });
+    authData = result.data;
+    error = result.error;
+  } catch (supabaseErr: any) {
+    // Supabase threw an unexpected error (network, rate limit, etc.)
+    throw new AppError(
+      supabaseErr?.message || "Authentication service unavailable. Please try again later.",
+      503
+    );
+  }
 
   if (error) {
-    if (error.message.includes("already registered")) {
+    const msg = error.message || "";
+    if (msg.includes("already registered") || msg.includes("already an account")) {
       throw new AppError("Email already registered", 409);
     }
-    throw new AppError(error.message, 400);
+    if (msg.includes("rate limit") || msg.includes("too many")) {
+      throw new AppError("Too many registration attempts. Please wait a moment and try again.", 429);
+    }
+    throw new AppError(msg || "Registration failed. Please try again.", 400);
   }
-  if (!authData.user) throw new AppError("Failed to create user", 500);
+  if (!authData?.user) throw new AppError("Failed to create user", 500);
 
   const user = await prisma.user.create({
     data: {

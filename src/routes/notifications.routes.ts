@@ -9,6 +9,7 @@ const router = Router();
 router.use(requireAuth);
 router.use(requireTenantAccess);
 router.get("/", notificationController.listNotifications);
+router.get("/unread-count", notificationController.getUnreadCount);
 router.patch("/read", validate(markReadSchema), notificationController.markAsRead);
 router.patch("/read-all", notificationController.markAllAsRead);
 export default router;

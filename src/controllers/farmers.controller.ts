@@ -50,3 +50,29 @@ export async function updateProfile(req: Request, res: Response, next: NextFunct
     next(error);
   }
 }
+
+/**
+ * List all farmers (admin only).
+ */
+export async function listFarmers(req: Request, res: Response, next: NextFunction) {
+  try {
+    const page = parseInt(String(req.query.page ?? "1"), 10);
+    const limit = parseInt(String(req.query.limit ?? "20"), 10);
+    const farmers = await farmerService.listFarmers(req.user!.tenantId, page, limit);
+    res.json({ status: "success", ...farmers });
+  } catch (error) {
+    next(error);
+  }
+}
+
+/**
+ * Get a single farmer by ID (admin only).
+ */
+export async function getFarmer(req: Request, res: Response, next: NextFunction) {
+  try {
+    const farmer = await farmerService.getFarmerById(String(req.params.id), req.user!.tenantId);
+    res.json({ status: "success", data: farmer });
+  } catch (error) {
+    next(error);
+  }
+}

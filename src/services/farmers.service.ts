@@ -52,6 +52,44 @@ export async function createFarmerProfile(
   return farmer;
 }
 
+/**
+ * List all farmers for a tenant (admin function).
+ */
+export async function listFarmers(tenantId: string, page: number, limit: number) {
+  const skip = (page - 1) * limit;
+  const [farmers, total] = await Promise.all([
+    prisma.farmer.findMany({
+      where: { tenantId },
+      skip,
+      take: limit,
+      orderBy: { createdAt: "desc" },
+      include: {
+        user: { select: { email: true, phone: true, isActive: true } },
+        landParcels: { select: { id: true, landTitleNumber: true, areaAcres: true, address: true, cropType: true } },
+      },
+    }),
+    prisma.farmer.count({ where: { tenantId } }),
+  ]);
+  return { data: farmers, pagination: { page, limit, total, totalPages: Math.ceil(total / limit) } };
+}
+
+/**
+ * Get a farmer by ID (admin function).
+ */
+export async function getFarmerById(farmerId: string, tenantId: string) {
+  const farmer = await prisma.farmer.findFirst({
+    where: { id: farmerId, tenantId },
+    include: {
+      user: { select: { email: true, phone: true, isActive: true, createdAt: true } },
+      landParcels: true,
+      policies: true,
+      claims: true,
+    },
+  });
+  if (!farmer) throw new AppError("Farmer not found", 404);
+  return farmer;
+}
+
 export async function updateFarmerProfile(
   userId: string,
   data: Record<string, any>,

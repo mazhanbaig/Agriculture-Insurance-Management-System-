@@ -16,6 +16,16 @@ export async function toggleUserStatus(req: Request, res: Response, next: NextFu
   catch (error) { next(error); }
 }
 
+export async function getStaff(req: Request, res: Response, next: NextFunction) {
+  try { const user = await adminService.getStaffById(String(req.params.id), req.user!.tenantId); res.json({ status: "success", data: user }); }
+  catch (error) { next(error); }
+}
+
+export async function updateStaff(req: Request, res: Response, next: NextFunction) {
+  try { const user = await adminService.updateStaffById(String(req.params.id), req.user!.tenantId, req.body); res.json({ status: "success", data: user }); }
+  catch (error) { next(error); }
+}
+
 export async function getDashboard(req: Request, res: Response, next: NextFunction) {
   try { const dashboard = await adminService.getDashboardAggregates(req.user!.tenantId); res.json({ status: "success", data: dashboard }); }
   catch (error) { next(error); }

@@ -44,6 +44,25 @@ export async function listFarmerPolicies(farmerId: string, page: number, limit: 
   return { policies, pagination: { page, limit, total, totalPages: Math.ceil(total / limit) } };
 }
 
+export async function listTenantPolicies(tenantId: string, page: number, limit: number) {
+  const skip = (page - 1) * limit;
+  const [policies, total] = await Promise.all([
+    prisma.policy.findMany({
+      where: { tenantId },
+      skip,
+      take: limit,
+      orderBy: { createdAt: "desc" },
+      include: {
+        policyPlan: true,
+        landParcel: true,
+        farmer: { select: { fullName: true, userId: true } },
+      },
+    }),
+    prisma.policy.count({ where: { tenantId } }),
+  ]);
+  return { policies, pagination: { page, limit, total, totalPages: Math.ceil(total / limit) } };
+}
+
 export async function getPolicy(policyId: string, tenantId: string) {
   const policy = await prisma.policy.findFirst({
     where: { id: policyId, tenantId },

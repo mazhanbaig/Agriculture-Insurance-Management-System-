@@ -2,6 +2,21 @@ import { Request, Response, NextFunction } from "express";
 import * as billingService from "../services/billing.service";
 
 /**
+ * Stripe webhook handler.
+ * Expects raw body (parsed by express.raw before this handler).
+ */
+export async function handleWebhook(req: Request, res: Response, next: NextFunction) {
+  try {
+    const signature = req.headers["stripe-signature"] as string;
+    const rawBody = req.body?.toString() || JSON.stringify(req.body);
+    const result = await billingService.handleWebhookEvent(rawBody, signature);
+    res.json(result);
+  } catch (error) {
+    next(error);
+  }
+}
+
+/**
  * Create a Stripe Checkout session for subscribing the tenant.
  */
 export async function subscribe(req: Request, res: Response, next: NextFunction) {

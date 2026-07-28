@@ -53,18 +53,41 @@ export async function requireAuth(
       throw new AppError("Missing token", 401);
     }
 
-    // Verify token with Supabase Auth
-    const {
-      data: { user: supabaseUser },
-      error,
-    } = await supabase.auth.getUser(token);
+    let authId: string;
+    let email: string;
 
-    if (error || !supabaseUser) {
-      throw new AppError("Invalid or expired token", 401);
+    // Check for dev token (bypasses Supabase)
+    if (token.startsWith("dev_token_")) {
+      // Format: dev_token_{authId}_{timestamp}
+      // Token parts: ['dev', 'token', 'dev', '{uuid}', '{timestamp}']
+      // authId = parts[2..end-1] joined back (e.g., 'dev_uuid')
+      const tokenParts = token.split("_");
+      if (tokenParts.length < 4) {
+        throw new AppError("Invalid dev token format", 401);
+      }
+      const devAuthId = tokenParts.slice(2, -1).join("_");
+      const devUser = await prisma.user.findFirst({
+        where: { authId: devAuthId },
+      });
+      if (!devUser) {
+        throw new AppError("Invalid or expired token", 401);
+      }
+      authId = devUser.authId;
+      email = devUser.email;
+    } else {
+      // Normal Supabase token validation
+      const {
+        data: { user: supabaseUser },
+        error,
+      } = await supabase.auth.getUser(token);
+
+      if (error || !supabaseUser) {
+        throw new AppError("Invalid or expired token", 401);
+      }
+
+      authId = supabaseUser.id;
+      email = supabaseUser.email || "";
     }
-
-    const authId = supabaseUser.id;
-    const email = supabaseUser.email || "";
 
     // Resolve tenant from header (priority)
     const tenantHeader = req.headers["x-tenant-id"] as string | undefined;

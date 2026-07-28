@@ -11,6 +11,8 @@ router.use(requireTenantAccess);
 router.use(requireRole("TENANT_ADMIN", "PLATFORM_ADMIN"));
 router.post("/staff", validate(createStaffUserSchema), adminController.createStaffUser);
 router.get("/staff", adminController.listStaffUsers);
+router.get("/staff/:id", adminController.getStaff);
+router.patch("/staff/:id", adminController.updateStaff);
 router.patch("/staff/:id/toggle-status", adminController.toggleUserStatus);
 router.get("/dashboard", adminController.getDashboard);
 router.get("/analytics/claims", adminController.getClaimsAnalytics);

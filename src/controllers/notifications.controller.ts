@@ -15,3 +15,8 @@ export async function markAllAsRead(req: Request, res: Response, next: NextFunct
   try { await notificationService.markAllAsRead(req.user!.id); res.json({ status: "success", message: "All notifications marked as read" }); }
   catch (error) { next(error); }
 }
+
+export async function getUnreadCount(req: Request, res: Response, next: NextFunction) {
+  try { const count = await notificationService.getUnreadCount(req.user!.id); res.json({ status: "success", data: { count } }); }
+  catch (error) { next(error); }
+}

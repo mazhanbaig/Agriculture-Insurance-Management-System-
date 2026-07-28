@@ -19,3 +19,7 @@ export async function markAsRead(userId: string, notificationIds: string[]) {
 export async function markAllAsRead(userId: string) {
   await prisma.notification.updateMany({ where: { userId, isRead: false }, data: { isRead: true } });
 }
+
+export async function getUnreadCount(userId: string) {
+  return prisma.notification.count({ where: { userId, isRead: false } });
+}

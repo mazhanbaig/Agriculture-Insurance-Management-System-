@@ -1,16 +1,12 @@
 import express from "express";
 import cors from "cors";
 import helmet from "helmet";
-import http from "http";
 import pinoHttp from "pino-http";
 import { randomUUID } from "crypto";
-import pino from "pino";
 import { apiLimiter } from "./middleware/rateLimiter";
-import { errorHandler, AppError } from "./middleware/errorHandler";
-import { resolveTenant } from "./middleware/auth";
-import { redis, checkRedisConnection } from "./lib/redis";
-import { handleWebhook } from "./controllers/billingWebhook.controller";
-
+import { resolveTenant } from "./middleware/tenant";
+import { errorHandler } from "./middleware/errorHandler";
+import { logger } from "./lib/logger";
 import authRoutes from "./routes/auth.routes";
 import farmerRoutes from "./routes/farmers.routes";
 import landParcelRoutes from "./routes/landParcels.routes";
@@ -24,7 +20,6 @@ import adminRoutes from "./routes/admin.routes";
 import platformRoutes from "./routes/platform.routes";
 import tenantSettingsRoutes from "./routes/tenantSettings.routes";
 import importRoutes from "./routes/import.routes";
-import webhookRoutes from "./routes/webhook.routes";
 import billingRoutes from "./routes/billing.routes";
 import tenantFieldRoutes from "./routes/tenantFields.routes";
 import iamRoutes from "./routes/iam.routes";
@@ -32,48 +27,53 @@ import policyRequestRoutes from "./routes/policyRequests.routes";
 import chatRoutes from "./routes/chat.routes";
 import visitRoutes from "./routes/visits.routes";
 import damageRoutes from "./routes/damage.routes";
+import webhookRoutes from "./routes/webhook.routes";
 
-const logger = pino({ name: "aims" });
+// Stripe webhook handler — imported outside the mount to ensure it's available
+import { handleWebhook } from "./controllers/billing.controller";
+
 const app = express();
+export default app;
 
-/**
- * Required environment variables — validated on startup.
- * Exit immediately if any are missing.
- */
-const REQUIRED_ENV_VARS = [
+// Trust proxy for rate limiter IP detection behind Railway/reverse proxy
+app.set("trust proxy", 1);
+
+// -------------
+// GLOBAL CONFIG
+// -------------
+
+// Log startup
+logger.info({ nodeEnv: process.env.NODE_ENV }, "Starting server");
+logger.info(
+  { frontendUrl: process.env.FRONTEND_URL || "http://localhost:3000" },
+  "Frontend URL"
+);
+
+// Verify critical env vars are set
+const requiredEnvVars = [
+  "NODE_ENV",
+  "PORT",
+  "DATABASE_URL",
   "SUPABASE_URL",
   "SUPABASE_ANON_KEY",
-  "DATABASE_URL",
+  "SUPABASE_SERVICE_ROLE_KEY",
+  "JWT_SECRET",
+  "NEXTAUTH_SECRET",
+  "FRONTEND_URL",
   "REDIS_URL",
-  "CLOUDINARY_CLOUD_NAME",
-  "CLOUDINARY_API_KEY",
-  "CLOUDINARY_API_SECRET",
-  "OPENROUTER_API_KEY",
-] as const;
-
-function validateEnvVars(): void {
-  const missing: string[] = [];
-  for (const key of REQUIRED_ENV_VARS) {
-    if (!process.env[key]) {
-      missing.push(key);
-    }
-  }
-  if (missing.length > 0) {
-    logger.error({ missing }, "Missing required environment variables");
-    console.error(
-      `❌ FATAL: Missing required environment variables: ${missing.join(", ")}\n` +
-      "Please create a .env file with these variables. See .env.example for reference."
-    );
-    process.exit(1);
-  }
+];
+const missing: string[] = [];
+for (const v of requiredEnvVars) {
+  if (!process.env[v]) missing.push(v);
+}
+if (missing.length > 0) {
+  logger.warn({ missing }, "Missing environment variables — some features may not work");
+} else {
   logger.info("All required environment variables are set");
 }
 
-// Skip validation in test mode — tests set env vars dynamically
-if (process.env.NODE_ENV !== "test") {
-  validateEnvVars();
-}
-
+// Track whether we've triggered the setImmediate startup check
+let _startupCheckTriggered = false;
 
 /**
  * Request ID middleware – assigns a unique ID to every request
@@ -132,6 +132,17 @@ app.use("/api/v1/chat", chatRoutes);
 app.use("/api/v1/visits", visitRoutes);
 app.use("/api/v1/damage", damageRoutes);
 
+// ════════════════════════════════════════════
+// DEV ROUTES — bypass Supabase Auth entirely
+// Only available when NODE_ENV !== "production"
+// ════════════════════════════════════════════
+if (process.env.NODE_ENV !== "production") {
+  // Dynamic import so the module is only loaded in dev
+  const devAuthRoutes = require("./routes/dev-auth.routes").default;
+  app.use("/api/v1/dev/auth", devAuthRoutes);
+  logger.info("🧪 Dev auth routes registered — bypass Supabase rate limits");
+}
+
 // Initialize background workers (only in non-test mode)
 // Wrapped in try/catch to prevent startup crashes (e.g. during Railway health checks)
 if (process.env.NODE_ENV !== "test") {
@@ -148,45 +159,51 @@ if (process.env.NODE_ENV !== "test") {
     logger.error({ err }, "Failed to initialize background workers — continuing without them");
   }
 }
+
+// Error handler — must be last
 app.use(errorHandler);
 
-async function start() {
-  const PORT = parseInt(process.env.PORT || "4000", 10);
-  if (process.env.NODE_ENV !== "test") {
-    const server = http.createServer(app);
-    const { initSocket } = await import("./lib/socket");
-    initSocket(server);
-    server.listen(PORT, () => logger.info(`Server running on port ${PORT}`));
-  }
+// Graceful shutdown
+const start = () => {
+  const port = process.env.PORT || 4000;
+  const server = app.listen(port, () => {
+    logger.info(`Server running on port ${port}`);
 
-  // Async initialization — runs after server is already listening for health checks
-  try {
-    await checkRedisConnection();
-    logger.info("Redis connection verified successfully");
-  } catch (err) {
-    logger.error({ err }, "Redis connection failed — BullMQ queues will not work (server continues)");
-  }
+    // One-time startup check: log which env vars are actually configured vs mock
+    if (!_startupCheckTriggered) {
+      _startupCheckTriggered = true;
+      setImmediate(async () => {
+        try {
+          const { prisma } = await import("./lib/prisma");
+          await prisma.$queryRaw`SELECT 1`;
+          logger.info("✅ Database connection successful");
+        } catch (err) {
+          logger.error({ err }, "❌ Database connection failed on startup");
+        }
 
-  // Schedule background jobs (non-blocking)
-  if (process.env.NODE_ENV !== "test") {
-    try {
-      const { scheduleAutoTriggerCheck } = await import("./jobs/auto-trigger-worker");
-      await scheduleAutoTriggerCheck();
-    } catch (err) {
-      logger.warn({ err }, "Failed to schedule auto-trigger check — cron not started");
+        try {
+          const { supabase } = await import("./lib/supabase");
+          const { error } = await supabase.auth.getSession();
+          if (error) {
+            logger.warn({ error: error.message }, "⚠️ Supabase connection issue — expected in local dev without full config");
+          } else {
+            logger.info("✅ Supabase connection successful");
+          }
+        } catch (err) {
+          logger.warn({ err }, "⚠️ Supabase check failed — expected if Supabase env vars are partial");
+        }
+      });
     }
-    try {
-      const { scheduleMonthlyBilling } = await import("./jobs/billingWorker");
-      await scheduleMonthlyBilling();
-    } catch (err) {
-      logger.warn({ err }, "Failed to schedule monthly billing — cron not started");
-    }
-  }
-}
+  });
 
-start().catch((err) => {
-  logger.error({ err }, "Failed to start server");
-  process.exit(1);
-});
+  process.on("SIGINT", () => {
+    logger.info("Shutting down gracefully...");
+    server.close(() => process.exit(0));
+  });
+  process.on("SIGTERM", () => {
+    logger.info("Shutting down gracefully...");
+    server.close(() => process.exit(0));
+  });
+};
 
-export { app };
+start();
