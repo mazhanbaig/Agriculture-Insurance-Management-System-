@@ -7,7 +7,6 @@ export async function getFarmerProfile(userId: string) {
     where: { userId },
     include: { landParcels: true, policies: true, claims: true },
   });
-  if (!farmer) throw new AppError("Farmer profile not found. Create one first.", 404);
   return farmer;
 }
 
@@ -92,23 +91,55 @@ export async function getFarmerById(farmerId: string, tenantId: string) {
 
 export async function updateFarmerProfile(
   userId: string,
+  tenantId: string,
   data: Record<string, any>,
   customData?: Record<string, any>
 ) {
-  const farmer = await prisma.farmer.findUnique({ where: { userId } });
-  if (!farmer) throw new AppError("Farmer profile not found", 404);
   if (data.dateOfBirth) data.dateOfBirth = new Date(data.dateOfBirth);
+  // Map frontend field names to DB field names
+  if (data.name && !data.fullName) data.fullName = data.name;
+  if (data.state && !data.province) data.province = data.state;
+  delete data.name;
+  delete data.state;
+  delete data.phone; // phone lives on User model, not Farmer
+
+  const existing = await prisma.farmer.findUnique({ where: { userId } });
+
+  if (!existing) {
+    // Auto-create farmer profile if it doesn't exist
+    const user = await prisma.user.findUnique({ where: { id: userId } });
+    if (!user) throw new AppError("User not found", 404);
+
+    const farmer = await prisma.farmer.create({
+      data: {
+        userId,
+        tenantId,
+        fullName: data.fullName || user.email?.split("@")[0] || "Unknown",
+        cnicNumber: data.cnicNumber || `TEMP-${userId.slice(0, 8)}`,
+        ...data,
+      },
+    });
+
+    if (customData) {
+      const validatedCustomData = await tenantFieldsService.validateCustomData(tenantId, customData);
+      if (validatedCustomData) {
+        await tenantFieldsService.saveFarmerFieldValues(farmer.id, validatedCustomData);
+      }
+    }
+
+    return farmer;
+  }
 
   const result = await prisma.farmer.update({ where: { userId }, data });
 
   // Update custom field values if provided
   if (customData) {
     const validatedCustomData = await tenantFieldsService.validateCustomData(
-      farmer.tenantId,
+      existing.tenantId,
       customData
     );
     if (validatedCustomData) {
-      await tenantFieldsService.saveFarmerFieldValues(farmer.id, validatedCustomData);
+      await tenantFieldsService.saveFarmerFieldValues(existing.id, validatedCustomData);
     }
   }
 

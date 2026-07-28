@@ -14,6 +14,10 @@ export async function getFieldSchema(req: Request, res: Response, next: NextFunc
 export async function getProfile(req: Request, res: Response, next: NextFunction) {
   try {
     const farmer = await farmerService.getFarmerProfile(req.user!.id);
+    if (!farmer) {
+      res.json({ status: "success", data: null });
+      return;
+    }
     // Attach custom field values if any
     const fieldValues = await tenantFieldsService.getFarmerFieldValues(farmer.id);
     res.json({ status: "success", data: { ...farmer, customData: fieldValues } });
@@ -42,6 +46,7 @@ export async function updateProfile(req: Request, res: Response, next: NextFunct
     const { customData, ...farmerData } = req.body;
     const farmer = await farmerService.updateFarmerProfile(
       req.user!.id,
+      req.user!.tenantId,
       farmerData,
       customData
     );
