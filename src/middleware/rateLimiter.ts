@@ -1,9 +1,9 @@
-import rateLimit from "express-rate-limit";
+import rateLimit, { ipKeyGenerator } from "express-rate-limit";
 
 /**
  * Per-user rate limiter.
  *   - Authenticated: keyed by `req.user.id` → 10 req/min per user
- *   - Unauthenticated: keyed by IP → 3 req/min per IP
+ *   - Unauthenticated: keyed by validated IP → 3 req/min per IP
  *
  * Enable by setting RATE_LIMIT_ENABLED=true in production.
  * Disabled by default so local dev is frictionless.
@@ -13,12 +13,12 @@ const RATE_LIMIT_ENABLED = process.env.RATE_LIMIT_ENABLED === "true";
 
 function getUserKey(req: any): string {
   if (req.user?.id) return `user:${req.user.id}`;
-  return `ip:${req.ip}`;
+  return ipKeyGenerator(req);
 }
 
 function getAuthKey(req: any): string {
   if (req.user?.id) return `auth:user:${req.user.id}`;
-  return `auth:ip:${req.ip}`;
+  return `auth:${ipKeyGenerator(req)}`;
 }
 
 /**
