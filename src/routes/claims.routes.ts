@@ -2,6 +2,7 @@ import { Router } from "express";
 import { requireAuth } from "../middleware/auth";
 import { requireRole, requireTenantAccess } from "../middleware/roleGuard";
 import * as claimController from "../controllers/claims.controller";
+import * as damageController from "../controllers/damage.controller";
 import { validate } from "../middleware/validate";
 import { createClaimSchema, assignClaimSchema, updateClaimStatusSchema } from "../validators/claims.validator";
 
@@ -16,4 +17,5 @@ router.get("/", requireRole("CLAIMS_OFFICER", "SENIOR_CLAIMS_OFFICER", "TENANT_A
 router.get("/:id", requireRole("CLAIMS_OFFICER", "SENIOR_CLAIMS_OFFICER", "TENANT_ADMIN", "PLATFORM_ADMIN"), claimController.getClaim);
 router.patch("/:id/assign", requireRole("CLAIMS_OFFICER", "SENIOR_CLAIMS_OFFICER", "TENANT_ADMIN", "PLATFORM_ADMIN"), validate(assignClaimSchema), claimController.assignClaim);
 router.patch("/:id/status", requireRole("CLAIMS_OFFICER", "SENIOR_CLAIMS_OFFICER", "TENANT_ADMIN", "PLATFORM_ADMIN"), validate(updateClaimStatusSchema), claimController.updateClaimStatus);
+router.get("/:id/fraud-analysis", requireRole("CLAIMS_OFFICER", "SENIOR_CLAIMS_OFFICER", "TENANT_ADMIN", "PLATFORM_ADMIN", "FARMER"), damageController.getDamageAssessment);
 export default router;

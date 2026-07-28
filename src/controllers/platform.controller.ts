@@ -1,4 +1,5 @@
 import { Request, Response, NextFunction } from "express";
+import { prisma } from "../lib/prisma";
 import * as platformService from "../services/platform.service";
 
 export async function createTenant(req: Request, res: Response, next: NextFunction) {
@@ -75,5 +76,28 @@ export async function seedTenantPlans(req: Request, res: Response, next: NextFun
   try {
     const plans = await platformService.seedTenantPlans(String(req.params.id), req.body.plans);
     res.status(201).json({ status: "success", data: plans });
+  } catch (error) { next(error); }
+}
+
+export async function getPlatformAnalytics(req: Request, res: Response, next: NextFunction) {
+  try {
+    const [tenants, users, claims, policies] = await Promise.all([
+      prisma.tenant.findMany({ select: { id: true, status: true, name: true, createdAt: true } }),
+      prisma.user.count(),
+      prisma.claim.count(),
+      prisma.policy.count(),
+    ]);
+    const activeTenants = tenants.filter(t => t.status === "ACTIVE").length;
+    res.json({
+      status: "success",
+      data: {
+        totalTenants: tenants.length,
+        activeTenants,
+        totalUsers: users,
+        totalClaims: claims,
+        totalPolicies: policies,
+        tenantList: tenants,
+      },
+    });
   } catch (error) { next(error); }
 }

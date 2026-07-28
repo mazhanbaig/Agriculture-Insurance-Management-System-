@@ -22,5 +22,6 @@ router.delete("/tenants/:id", platformController.deactivateTenant);
 router.patch("/tenants/:id/approve", platformController.approveTenant);
 router.patch("/tenants/:id/suspend", platformController.suspendTenant);
 router.post("/tenants/:id/seed", validate(seedPlansSchema), platformController.seedTenantPlans);
+router.get("/analytics", platformController.getPlatformAnalytics);
 
 export default router;

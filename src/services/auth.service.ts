@@ -53,14 +53,15 @@ export async function register(data: {
   role: string;
   tenantSlug?: string;
 }) {
-  let tenantId: string | undefined;
+  let tenantId: string;
   if (data.tenantSlug) {
     const tenant = await prisma.tenant.findUnique({ where: { slug: data.tenantSlug } });
     if (!tenant) throw new AppError("Tenant not found", 404);
     tenantId = tenant.id;
   } else {
-    const defaultTenant = await prisma.tenant.findUnique({ where: { slug: "default" } });
-    if (defaultTenant) tenantId = defaultTenant.id;
+    const defaultTenant = await prisma.tenant.findFirst({ where: { status: "ACTIVE" }, orderBy: { createdAt: "asc" } });
+    if (!defaultTenant) throw new AppError("No active tenant found. Please provide a tenant slug.", 400);
+    tenantId = defaultTenant.id;
   }
 
   let authData, error;
@@ -72,7 +73,6 @@ export async function register(data: {
     authData = result.data;
     error = result.error;
   } catch (supabaseErr: any) {
-    // Supabase threw an unexpected error (network, rate limit, etc.)
     throw new AppError(
       supabaseErr?.message || "Authentication service unavailable. Please try again later.",
       503
@@ -92,17 +92,12 @@ export async function register(data: {
   if (!authData?.user) throw new AppError("Failed to create user", 500);
 
   const user = await prisma.user.create({
-    data: {
-      tenantId: tenantId || "",
-      authId: authData.user.id,
-      email: data.email,
-      role: data.role as any,
-    },
+    data: { tenantId, authId: authData.user.id, email: data.email, role: data.role as any },
   });
 
   if (data.role === "FARMER") {
     await prisma.farmer.create({
-      data: { tenantId: tenantId || "", userId: user.id, fullName: data.name, cnicNumber: "0000000000000" },
+      data: { tenantId, userId: user.id, fullName: data.name, cnicNumber: "0000000000000" },
     });
   }
 
@@ -127,7 +122,7 @@ export async function login(email: string, password: string) {
   const authId = data.user.id;
   let user = await prisma.user.findUnique({ where: { authId } });
   if (!user) {
-    const defaultTenant = await prisma.tenant.findUnique({ where: { slug: "default" } });
+    const defaultTenant = await prisma.tenant.findFirst({ where: { status: "ACTIVE" }, orderBy: { createdAt: "asc" } });
     user = await prisma.user.findFirst({
       where: { email, tenantId: defaultTenant?.id || "" },
     });
@@ -167,8 +162,9 @@ export async function oauthCallback(data: {
   provider: string;
   providerAccountId: string;
 }) {
-  const defaultTenant = await prisma.tenant.findUnique({ where: { slug: "default" } });
-  const tenantId = defaultTenant?.id || "";
+  const activeTenant = await prisma.tenant.findFirst({ where: { status: "ACTIVE" }, orderBy: { createdAt: "asc" } });
+  if (!activeTenant) throw new AppError("No active tenant available. Please contact support.", 503);
+  const tenantId = activeTenant.id;
   const { email } = data;
 
   let user = await prisma.user.findFirst({ where: { email, tenantId } });
@@ -206,7 +202,7 @@ export async function completeOAuthSetup(userId: string, data: {
   tenantSlug?: string;
   phone?: string;
 }) {
-  let tenantId: string | undefined;
+  let tenantId: string | null = null;
   if (data.tenantSlug) {
     const tenant = await prisma.tenant.findUnique({ where: { slug: data.tenantSlug } });
     if (!tenant) throw new AppError("Tenant not found", 404);
@@ -214,7 +210,7 @@ export async function completeOAuthSetup(userId: string, data: {
   }
 
   const updateData: any = { role: data.role as any };
-  if (tenantId) updateData.tenantId = tenantId;
+  if (tenantId != null) updateData.tenantId = tenantId;
   if (data.phone) updateData.phone = data.phone;
 
   const user = await prisma.user.update({

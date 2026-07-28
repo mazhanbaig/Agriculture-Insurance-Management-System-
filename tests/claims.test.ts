@@ -1,4 +1,4 @@
-import { app } from "../src/server";
+import app from "../src/server";
 import request from "supertest";
 
 // Mock Redis first to prevent ECONNREFUSED noise
