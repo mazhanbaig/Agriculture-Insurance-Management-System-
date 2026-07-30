@@ -92,7 +92,7 @@ app.get("/health", (_req, res) => {
   res.json({ status: "ok", timestamp: new Date().toISOString() });
 });
 app.use(cors({
-  origin: process.env.FRONTEND_URL?.split(",") || ["http://localhost:3000"],
+  origin: process.env.FRONTEND_URL?.split(",") || ["http://localhost:3000", "http://localhost:3001"],
   credentials: true,
 }));
 // Stripe webhook needs raw body before JSON parsing
