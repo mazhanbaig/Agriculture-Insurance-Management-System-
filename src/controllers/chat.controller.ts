@@ -32,7 +32,7 @@ export async function getMessages(req: Request, res: Response, next: NextFunctio
     const page = parseInt(req.query.page as string) || 1;
     const limit = parseInt(req.query.limit as string) || 50;
     const result = await chatService.getConversationMessages(conversationId, page, limit);
-    res.json({ status: "success", data: result });
+    res.json({ status: "success", ...result });
   } catch (error) { next(error); }
 }
 
@@ -44,6 +44,6 @@ export async function listConversations(req: Request, res: Response, next: NextF
     const page = parseInt(req.query.page as string) || 1;
     const limit = parseInt(req.query.limit as string) || 20;
     const result = await chatService.listConversations(tenantId, userId, role, page, limit);
-    res.json({ status: "success", data: result });
+    res.json({ status: "success", ...result });
   } catch (error) { next(error); }
 }

@@ -8,7 +8,7 @@ export async function listPolicyPlans(tenantId: string, page: number, limit: num
     prisma.policyPlan.findMany({ where, skip, take: limit, orderBy: { createdAt: "desc" } }),
     prisma.policyPlan.count({ where }),
   ]);
-  return { plans, pagination: { page, limit, total, totalPages: Math.ceil(total / limit) } };
+  return { items: plans, pagination: { page, limit, total, totalPages: Math.ceil(total / limit) } };
 }
 
 export async function getPolicyPlan(planId: string, tenantId: string) {

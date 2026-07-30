@@ -16,7 +16,7 @@ export async function listStaffUsers(tenantId: string, page: number, limit: numb
     prisma.user.findMany({ where, skip, take: limit, orderBy: { createdAt: "desc" }, select: { id: true, email: true, phone: true, role: true, isActive: true, createdAt: true, lastLoginAt: true } }),
     prisma.user.count({ where }),
   ]);
-  return { users, pagination: { page, limit, total, totalPages: Math.ceil(total / limit) } };
+  return { items: users, pagination: { page, limit, total, totalPages: Math.ceil(total / limit) } };
 }
 
 export async function getStaffById(userId: string, tenantId: string) {
@@ -65,10 +65,15 @@ export async function getDashboardAggregates(tenantId: string) {
 }
 
 export async function getClaimsAnalytics(tenantId: string) {
+  const cacheKey = `admin:analytics:${tenantId}`;
+  try { const cached = await redis.get(cacheKey); if (cached) return JSON.parse(cached); } catch {}
+
   const where = { tenantId };
   const [claimsByStatus, claimsByIncidentType] = await Promise.all([
     prisma.claim.groupBy({ by: ["status"], where, _count: { id: true } }),
     prisma.claim.groupBy({ by: ["incidentType"], where, _count: { id: true } }),
   ]);
-  return { claimsByStatus, claimsByIncidentType };
+  const result = { claimsByStatus, claimsByIncidentType };
+  try { await redis.setex(cacheKey, 300, JSON.stringify(result)); } catch {}
+  return result;
 }

@@ -216,9 +216,14 @@ export async function uploadDocument(
   return document;
 }
 
-export async function getClaimDocuments(claimId: string) {
+export async function getClaimDocuments(claimId: string, tenantId?: string) {
+  const where: Record<string, any> = { claimId };
+  if (tenantId) {
+    const claim = await prisma.claim.findFirst({ where: { id: claimId, tenantId }, select: { id: true } });
+    if (!claim) throw new AppError("Claim not found", 404);
+  }
   return prisma.claimDocument.findMany({
-    where: { claimId },
+    where,
     orderBy: { uploadedAt: "desc" },
   });
 }

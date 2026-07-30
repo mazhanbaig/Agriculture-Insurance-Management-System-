@@ -9,7 +9,7 @@ export async function listNotifications(userId: string, page: number, limit: num
     prisma.notification.count({ where }),
     prisma.notification.count({ where: { userId, isRead: false } }),
   ]);
-  return { notifications, unreadCount, pagination: { page, limit, total, totalPages: Math.ceil(total / limit) } };
+  return { items: notifications, unreadCount, pagination: { page, limit, total, totalPages: Math.ceil(total / limit) } };
 }
 
 export async function markAsRead(userId: string, notificationIds: string[]) {

@@ -200,7 +200,7 @@ export async function listTenants(page: number, limit: number, status?: string) 
     prisma.tenant.count({ where }),
   ]);
   return {
-    tenants,
+    items: tenants,
     pagination: { page, limit, total, totalPages: Math.ceil(total / limit) },
   };
 }

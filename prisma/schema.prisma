@@ -240,6 +240,8 @@ model Policy {
   @@index([tenantId])
   @@index([farmerId])
   @@index([status])
+  @@index([underwriterId])
+  @@index([landParcelId])
 }
 
 model Claim {
@@ -329,6 +331,8 @@ model Payment {
   @@index([tenantId])
   @@index([policyId])
   @@index([claimId])
+  @@index([status])
+  @@index([type])
 }
 
 model FraudAuditLog {

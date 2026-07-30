@@ -133,8 +133,43 @@ export async function calculateDamageAndPayout(input: DamageInput): Promise<Payo
 }
 
 export async function getDamageAssessment(claimId: string, tenantId: string) {
-  const assessment = await prisma.damageAssessment.findFirst({
-    where: { claimId, tenantId },
-  });
-  return assessment;
+  const [assessment, claim, fraudLogs] = await Promise.all([
+    prisma.damageAssessment.findFirst({ where: { claimId, tenantId } }),
+    prisma.claim.findFirst({
+      where: { id: claimId, tenantId },
+      select: { fraudScore: true, fraudVerdict: true },
+    }),
+    prisma.fraudAuditLog.findMany({
+      where: { claimId },
+      orderBy: { createdAt: "desc" },
+      take: 5,
+    }),
+  ]);
+  if (!assessment && !claim) return null;
+  return {
+    ...(assessment ? {
+      ndviDamagePercent: assessment.ndviDamagePercent,
+      weatherConfirmed: assessment.weatherConfirmed,
+      aiDamageScore: assessment.aiDamageScore,
+      groundTruthDamagePercent: assessment.groundTruthDamagePercent,
+      finalDamagePercent: assessment.finalDamagePercent,
+      calculatedPayout: assessment.calculatedPayout,
+      calculationLog: assessment.calculationLog,
+      assessedByUserId: assessment.assessedByUserId,
+      assessedAt: assessment.assessedAt,
+    } : {}),
+    fraudScore: claim?.fraudScore ?? null,
+    fraudVerdict: claim?.fraudVerdict ?? null,
+    fraudAuditLogs: fraudLogs.map(l => ({
+      id: l.id,
+      score: l.score,
+      verdict: l.verdict,
+      flags: l.flags,
+      ruleResults: l.ruleResults,
+      sentinelResult: l.sentinelResult,
+      weatherResult: l.weatherResult,
+      llmResult: l.llmResult,
+      createdAt: l.createdAt,
+    })),
+  };
 }

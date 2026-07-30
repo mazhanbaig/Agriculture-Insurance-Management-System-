@@ -106,7 +106,7 @@ export async function listVisits(
     prisma.visit.count({ where }),
   ]);
 
-  return { visits, pagination: { page, limit, total, totalPages: Math.ceil(total / limit) } };
+  return { items: visits, pagination: { page, limit, total, totalPages: Math.ceil(total / limit) } };
 }
 
 export async function cancelVisit(visitId: string) {

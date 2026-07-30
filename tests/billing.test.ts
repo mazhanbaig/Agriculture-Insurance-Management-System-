@@ -79,7 +79,7 @@ describe("Billing Service", () => {
       (prisma.invoice.count as jest.Mock).mockResolvedValue(1);
 
       const result = await billingService.listInvoices(tenantId, 1, 20);
-      expect(result.data).toEqual(mockInvoices);
+      expect(result.items).toEqual(mockInvoices);
       expect(result.pagination.total).toBe(1);
       expect(result.pagination.totalPages).toBe(1);
       expect(prisma.invoice.findMany).toHaveBeenCalledWith(
@@ -96,7 +96,7 @@ describe("Billing Service", () => {
       (prisma.invoice.count as jest.Mock).mockResolvedValue(0);
 
       const result = await billingService.listInvoices(tenantId, 1, 20);
-      expect(result.data).toEqual([]);
+      expect(result.items).toEqual([]);
       expect(result.pagination.total).toBe(0);
     });
   });

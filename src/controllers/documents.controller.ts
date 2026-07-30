@@ -11,7 +11,7 @@ export async function uploadDocument(req: Request, res: Response, next: NextFunc
 }
 
 export async function getClaimDocuments(req: Request, res: Response, next: NextFunction) {
-  try { const documents = await documentService.getClaimDocuments(String(req.params.claimId)); res.json({ status: "success", data: documents }); }
+  try { const documents = await documentService.getClaimDocuments(String(req.params.claimId), req.user?.tenantId); res.json({ status: "success", data: documents }); }
   catch (error) { next(error); }
 }
 

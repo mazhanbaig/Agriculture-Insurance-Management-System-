@@ -85,13 +85,16 @@ app.use((req: express.Request, _res: express.Response, next: express.NextFunctio
   next();
 });
 
-// Health check — must be first before any middleware that could fail
+app.use(helmet());
+
+// Health check — must be before auth middleware but after helmet for security headers
 app.get("/health", (_req, res) => {
   res.json({ status: "ok", timestamp: new Date().toISOString() });
 });
-
-app.use(helmet());
-app.use(cors());
+app.use(cors({
+  origin: process.env.FRONTEND_URL?.split(",") || ["http://localhost:3000"],
+  credentials: true,
+}));
 // Stripe webhook needs raw body before JSON parsing
 // Mount raw-body parser for webhook endpoints BEFORE the JSON middleware
 app.use("/api/v1/billing/webhook", express.raw({ type: "application/json" }), handleWebhook);

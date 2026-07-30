@@ -9,7 +9,7 @@ import rateLimit, { ipKeyGenerator } from "express-rate-limit";
  * Disabled by default so local dev is frictionless.
  */
 
-const RATE_LIMIT_ENABLED = process.env.RATE_LIMIT_ENABLED === "true";
+const RATE_LIMIT_ENABLED = process.env.RATE_LIMIT_ENABLED !== "false";
 
 function getUserKey(req: any): string {
   if (req.user?.id) return `user:${req.user.id}`;

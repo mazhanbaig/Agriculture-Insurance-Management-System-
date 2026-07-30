@@ -51,11 +51,11 @@ jest.mock("../src/lib/cloudinary", () => ({
   cloudinary: { uploader: { upload: jest.fn(), destroy: jest.fn() } },
 }));
 
-jest.mock("../src/utils/logger", () => ({
-  info: jest.fn(),
-  warn: jest.fn(),
-  error: jest.fn(),
-}));
+jest.mock("pino-http", () => jest.fn(() => (req: any, res: any, next: () => void) => next()));
+jest.mock("../src/utils/logger", () => {
+  const pino = jest.requireActual("pino");
+  return pino({ level: "silent" });
+});
 
 jest.mock("../src/lib/socket", () => ({
   getIO: jest.fn(() => ({ to: jest.fn(() => ({ emit: jest.fn() })) })),

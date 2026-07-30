@@ -338,7 +338,7 @@ describe("Tenant Isolation", () => {
       (prisma.user.count as jest.Mock).mockResolvedValue(1);
 
       const result = await adminService.listStaffUsers(tenantA, 1, 20);
-      expect(result.users).toEqual(mockStaff);
+      expect(result.items).toEqual(mockStaff);
 
       expect(prisma.user.findMany).toHaveBeenCalledWith(
         expect.objectContaining({

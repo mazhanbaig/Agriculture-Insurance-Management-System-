@@ -69,7 +69,7 @@ export async function listFarmerClaims(farmerId: string, tenantId: string, page:
     prisma.claim.findMany({ where, skip, take: limit, orderBy: { submittedAt: "desc" }, include: { policy: { include: { policyPlan: true } }, documents: true, statusHistory: { orderBy: { changedAt: "desc" } } } }),
     prisma.claim.count({ where }),
   ]);
-  return { claims, pagination: { page, limit, total, totalPages: Math.ceil(total / limit) } };
+  return { items: claims, pagination: { page, limit, total, totalPages: Math.ceil(total / limit) } };
 }
 
 export async function getClaim(claimId: string, tenantId: string) {
@@ -119,5 +119,5 @@ export async function listAllClaims(tenantId: string, page: number, limit: numbe
     prisma.claim.findMany({ where, skip, take: limit, orderBy: { submittedAt: "desc" }, include: { farmer: { select: { id: true, fullName: true } }, policy: { include: { policyPlan: { select: { name: true } } } }, assignedClaimsOfficer: { select: { id: true, email: true } } } }),
     prisma.claim.count({ where }),
   ]);
-  return { claims, pagination: { page, limit, total, totalPages: Math.ceil(total / limit) } };
+  return { items: claims, pagination: { page, limit, total, totalPages: Math.ceil(total / limit) } };
 }

@@ -69,16 +69,16 @@ export async function createPolicyRequest(
     select: { id: true },
   });
 
-  for (const staff of staffUsers) {
-    await notificationQueue.add("policy-request-created", {
+  await Promise.all(staffUsers.map(staff =>
+    notificationQueue.add("policy-request-created", {
       userId: staff.id,
       type: "POLICY_REQUEST_CREATED",
       title: "New Policy Purchase Request",
       message: `A farmer has requested to purchase "${request.policyPlan.name}" for ${request.landParcel.address}.`,
       relatedEntityType: "PolicyRequest",
       relatedEntityId: request.id,
-    });
-  }
+    })
+  ));
 
   logger.info({ requestId: request.id, farmerId, tenantId }, "Policy purchase request created");
   return request;
@@ -126,7 +126,7 @@ export async function listPolicyRequests(
   ]);
 
   return {
-    requests,
+    items: requests,
     pagination: { page, limit, total, totalPages: Math.ceil(total / limit) },
   };
 }

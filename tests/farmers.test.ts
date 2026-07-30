@@ -20,6 +20,9 @@ jest.mock("../src/lib/prisma", () => {
       create: jest.fn(),
       update: jest.fn(),
     },
+    user: {
+      findUnique: jest.fn(),
+    },
     tenantField: {
       findMany: jest.fn().mockResolvedValue([]),
     },
@@ -61,16 +64,15 @@ describe("Farmer Service", () => {
       (prisma.farmer.findUnique as jest.Mock).mockResolvedValue(mockFarmer);
 
       const farmer = await farmerService.getFarmerProfile(userId);
-      expect(farmer.id).toBe(farmerId);
-      expect(farmer.fullName).toBe("Test Farmer");
+      expect(farmer!.id).toBe(farmerId);
+      expect(farmer!.fullName).toBe("Test Farmer");
     });
 
-    it("should throw 404 when farmer profile does not exist", async () => {
+    it("should return null when farmer profile does not exist", async () => {
       (prisma.farmer.findUnique as jest.Mock).mockResolvedValue(null);
 
-      await expect(
-        farmerService.getFarmerProfile(userId)
-      ).rejects.toThrow("Farmer profile not found");
+      const farmer = await farmerService.getFarmerProfile(userId);
+      expect(farmer).toBeNull();
     });
   });
 
@@ -166,19 +168,20 @@ describe("Farmer Service", () => {
         fullName: "Updated Farmer",
       });
 
-      const farmer = await farmerService.updateFarmerProfile(userId, {
+      const farmer = await farmerService.updateFarmerProfile(userId, tenantId, {
         fullName: "Updated Farmer",
       });
 
       expect(farmer.fullName).toBe("Updated Farmer");
     });
 
-    it("should throw 404 when updating non-existent profile", async () => {
+    it("should throw 404 when updating non-existent profile with no user", async () => {
       (prisma.farmer.findUnique as jest.Mock).mockResolvedValue(null);
+      (prisma.user.findUnique as jest.Mock).mockResolvedValue(null);
 
       await expect(
-        farmerService.updateFarmerProfile("nonexistent-user", { fullName: "Ghost" })
-      ).rejects.toThrow("Farmer profile not found");
+        farmerService.updateFarmerProfile("nonexistent-user", tenantId, { fullName: "Ghost" })
+      ).rejects.toThrow("User not found");
     });
   });
 });

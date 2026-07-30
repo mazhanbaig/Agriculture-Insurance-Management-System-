@@ -213,7 +213,7 @@ export async function listInvoices(
   ]);
 
   return {
-    data: invoices,
+    items: invoices,
     pagination: { page, limit, total, totalPages: Math.ceil(total / limit) },
   };
 }

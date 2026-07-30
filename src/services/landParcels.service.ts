@@ -7,7 +7,7 @@ export async function getLandParcels(farmerId: string, tenantId: string, page: n
     prisma.landParcel.findMany({ where: { farmerId, tenantId }, skip, take: limit, orderBy: { createdAt: "desc" } }),
     prisma.landParcel.count({ where: { farmerId, tenantId } }),
   ]);
-  return { parcels, pagination: { page, limit, total, totalPages: Math.ceil(total / limit) } };
+  return { items: parcels, pagination: { page, limit, total, totalPages: Math.ceil(total / limit) } };
 }
 
 export async function getLandParcel(parcelId: string, tenantId: string) {

@@ -28,7 +28,7 @@ export async function listVisits(req: Request, res: Response, next: NextFunction
     const page = parseInt(req.query.page as string) || 1;
     const limit = parseInt(req.query.limit as string) || 20;
     const result = await visitService.listVisits(tenantId, claimId, status, page, limit);
-    res.json({ status: "success", data: result });
+    res.json({ status: "success", ...result });
   } catch (error) { next(error); }
 }
 

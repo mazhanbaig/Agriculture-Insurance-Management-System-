@@ -48,7 +48,7 @@ describe("Policy Plan Service", () => {
       (prisma.policyPlan.count as jest.Mock).mockResolvedValue(1);
 
       const result = await policyPlanService.listPolicyPlans(tenantId, 1, 20);
-      expect(result.plans).toEqual(mockPlans);
+      expect(result.items).toEqual(mockPlans);
       expect(result.pagination.total).toBe(1);
     });
 

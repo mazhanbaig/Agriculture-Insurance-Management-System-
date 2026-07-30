@@ -75,7 +75,7 @@ export async function getConversationMessages(
     prisma.message.count({ where: { conversationId } }),
   ]);
 
-  return { messages, pagination: { page, limit, total, totalPages: Math.ceil(total / limit) } };
+  return { items: messages, pagination: { page, limit, total, totalPages: Math.ceil(total / limit) } };
 }
 
 export async function listConversations(
@@ -110,5 +110,5 @@ export async function listConversations(
     prisma.conversation.count({ where }),
   ]);
 
-  return { conversations, pagination: { page, limit, total, totalPages: Math.ceil(total / limit) } };
+  return { items: conversations, pagination: { page, limit, total, totalPages: Math.ceil(total / limit) } };
 }

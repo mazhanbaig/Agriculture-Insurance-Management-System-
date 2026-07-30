@@ -41,7 +41,7 @@ export async function listUsers(page: number, limit: number, tenantId?: string) 
     prisma.user.count({ where }),
   ]);
   return {
-    users,
+    items: users,
     pagination: { page, limit, total, totalPages: Math.ceil(total / limit) },
   };
 }

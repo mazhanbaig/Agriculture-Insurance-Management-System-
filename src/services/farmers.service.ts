@@ -69,7 +69,7 @@ export async function listFarmers(tenantId: string, page: number, limit: number)
     }),
     prisma.farmer.count({ where: { tenantId } }),
   ]);
-  return { data: farmers, pagination: { page, limit, total, totalPages: Math.ceil(total / limit) } };
+  return { items: farmers, pagination: { page, limit, total, totalPages: Math.ceil(total / limit) } };
 }
 
 /**
